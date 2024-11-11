@@ -1,0 +1,11 @@
+@ensdomains/=node_modules/@ensdomains/
+@gnosis.pm/=node_modules/@gnosis.pm/
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+canonical-weth/=node_modules/canonical-weth/
+erc4626-tests/=lib/openzeppelin-contracts/lib/erc4626-tests/
+forge-std/=lib/openzeppelin-contracts/lib/forge-std/src/
+halmos-cheatcodes/=lib/openzeppelin-contracts/lib/halmos-cheatcodes/src/
+openzeppelin-contracts/=lib/openzeppelin-contracts/
+openzeppelin-solidity/=node_modules/openzeppelin-solidity/
+truffle/=node_modules/truffle/
+util-contracts/=lib/util-contracts/contracts/

@@ -1,6 +1,6 @@
 pragma solidity ^0.5.0;
-import "openzeppelin-solidity/contracts/math/SafeMath.sol";
-import "openzeppelin-solidity/contracts/drafts/SignedSafeMath.sol";
+import "openzeppelin-solidity/contracts/utils/math/SafeMath.sol";
+import "openzeppelin-solidity/contracts/utils/math/SignedSafeMath.sol";
 import "@gnosis.pm/util-contracts/contracts/Fixed192x64Math.sol";
 import "../MarketMakers/MarketMaker.sol";
 

@@ -1,4 +1,4 @@
-import { Column, JoinColumn, OneToOne } from 'typeorm';
+import { Column } from 'typeorm';
 import { BaseEntity } from '../../core/base.entity';
 
 export class BlockchainWallet extends BaseEntity {
@@ -18,4 +18,7 @@ export class BlockchainWallet extends BaseEntity {
   // @JoinColumn({ name: 'user_id' })
   // user: User;
 
+  getPrivateKey() {
+    return this.secret; // TODO: If the secret is encrypted, decrypt it here.
+  }
 }
