@@ -5,22 +5,29 @@ import { BinaryPredictionModule } from './binary-prediction/binary-prediction.mo
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { join } from 'path';
+import { ConfigModule } from './config/config.module';
+import { ConfigService } from './config/config.service';
 
 @Module({
   imports: [
     BinaryPredictionModule,
     BlockchainModule,
-    TypeOrmModule.forRoot({
-      type: 'postgres',
-      host: process.env.DATABASE_HOST,
-      port: 5432,
-      username: process.env.DATABASE_USER,
-      password: process.env.DATABASE_PASSWORD,
-      database: process.env.DATABASE_NAME,
-      entities: [join(__dirname, '..', '**', '*.entity{.ts,.js}')],
-      migrations: [join(__dirname, '..', 'migrations', '*{.ts,.js}')],
-      synchronize: true,
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => ({
+        type: 'postgres',
+        host: configService.get('DATABASE_HOST'),
+        port: +configService.get('DATABASE_PORT'),
+        username: configService.get('DATABASE_USER'),
+        password: configService.get('DATABASE_PASSWORD'),
+        database: configService.get('DATABASE_NAME'),
+        entities: [join(__dirname, '.', '**', '*.entity{.ts,.js}')],
+        migrations: [join(__dirname, '.', 'migrations', '*{.ts,.js}')],
+        synchronize: true,
+      }),
+      inject: [ConfigService],
     }),
+    ConfigModule,
   ],
   controllers: [AppController],
   providers: [AppService],

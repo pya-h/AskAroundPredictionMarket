@@ -1,6 +1,7 @@
-import { Column, PrimaryColumn } from 'typeorm';
+import { Column, Entity, PrimaryColumn } from 'typeorm';
 import { BaseEntity } from '../../core/base.entity';
 
+@Entity()
 export class Chain extends BaseEntity {
   @PrimaryColumn()
   id: number;

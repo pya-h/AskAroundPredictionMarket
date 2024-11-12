@@ -1,6 +1,7 @@
-import { Column } from 'typeorm';
+import { Column, Entity } from 'typeorm';
 import { BaseEntity } from '../../core/base.entity';
 
+@Entity()
 export class BlockchainWallet extends BaseEntity {
   @Column({ type: 'varchar', length: 32 })
   name: string;

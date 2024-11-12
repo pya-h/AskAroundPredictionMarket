@@ -1,8 +1,9 @@
-import { Column, ManyToOne } from 'typeorm';
+import { Column, Entity, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../core/base.entity';
 import { BinaryPredictionMarket } from './market.entity';
 import { PredictionOutcome } from './outcome.entity';
 
+@Entity()
 export class OutcomeToken extends BaseEntity {
   @Column({ name: 'market_id', type: 'integer' })
   marketId: number;
