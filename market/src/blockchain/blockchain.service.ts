@@ -81,4 +81,49 @@ export class BlockchainService {
     await trx.await();
     return trx.hash;
   }
+
+  async getBlocksTransactions(blockNumber: number) {
+    // Get block details
+    const block = await this.provider.getBlock(blockNumber);
+    console.log(`Block Number: ${block.number}`);
+    console.log(`Block Hash: ${block.hash}`);
+    console.log(
+      `Timestamp: ${new Date(block.timestamp * 1000).toLocaleString()}`,
+    );
+
+    // Get transactions in the block
+    for (const txHash of block.transactions) {
+      const transaction = await this.provider.getTransaction(txHash);
+      console.log(`Transaction Hash: ${transaction.hash}`);
+      console.log(`From: ${transaction.from}`);
+      console.log(`To: ${transaction.to}`);
+      console.log(`Value: ${ethers.formatEther(transaction.value)} ETH`);
+      console.log('---');
+    }
+
+    return {
+      blockNumber: block.number,
+      blockHash: block.hash,
+      timestamp: block.timestamp,
+      // or other block data
+      transactions: await Promise.all(
+        block.transactions.map(async (txHash) => {
+          const { hash, from, to, value, ...extra } =
+            await this.provider.getTransaction(txHash);
+          return {
+            hash,
+            from,
+            to,
+            amount: ethers.formatEther(value),
+            extra,
+          };
+        }),
+      ),
+    };
+  }
+
+  async getLatestBlock() {
+    const latestBlockNumber = await this.provider.getBlockNumber();
+    return this.getBlocksTransactions(latestBlockNumber);
+  }
 }

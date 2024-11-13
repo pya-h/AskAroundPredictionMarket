@@ -1,2 +1,0 @@
-[profile.default]
-rpc_endpoints = { sepolia = "${SEPOLIA_RPC_URL}" }
