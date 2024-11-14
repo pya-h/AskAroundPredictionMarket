@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { CryptoTokenEnum } from './enums/crypto-token.enum';
 import { PredictionOutcome } from 'src/binary-prediction/entities/outcome.entity';
 import { ethers } from 'ethers';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -7,15 +6,21 @@ import { Chain } from './entities/chain.entity';
 import { Repository } from 'typeorm';
 import { BlockchainWallet } from './entities/blockchain-wallet.entity';
 import {
-  FixedProductMarketMakerContract,
-  MarketMakerFactoryContract,
+  Weth9CollateralToken,
+  LmsrMarketMakerContractData,
 } from './contracts/market.contract';
+
+import { ConditionTokenContractData } from './contracts/ctf.contract';
 @Injectable()
 export class BlockchainService {
   private provider: ethers.JsonRpcProvider;
   private managerEthersWallet: ethers.Wallet;
-  private marketMakerFactory: ethers.Contract;
-  private fixedProductAMM: ethers.Contract;
+  private marketMakerFactoryContract: ethers.Contract;
+  private conditionTokensContract: ethers.Contract;
+
+  toKeccakHash(data: string) {
+    return ethers.keccak256(ethers.toUtf8Bytes(data));
+  }
 
   getChain(chainId: number) {
     return this.chainRepository.findOneBy({ id: chainId });
@@ -33,73 +38,52 @@ export class BlockchainService {
   }
 
   async init() {
-    const sepoliaNetwork = await this.getChain(11155111); // TODO: Decide how to set this.
+    const sepoliaNetwork = await this.getChain(1337); // TODO: Decide how to set this.
     this.provider = new ethers.JsonRpcProvider(sepoliaNetwork.rpcUrl);
     const wallet = await this.blockchainWalletRepository.findOneBy({
       userId: 0,
     }); // TODO: Modify this, and also add relations to user.
-    this.managerEthersWallet = new ethers.Wallet(
+    this.managerEthersWallet = new ethers.Wallet( // TODO: Modiy this to galache wallet.
       wallet.getPrivateKey(),
       this.provider,
     );
-    this.marketMakerFactory = new ethers.Contract(
-      MarketMakerFactoryContract.address,
-      MarketMakerFactoryContract.abi,
+    this.marketMakerFactoryContract = new ethers.Contract(
+      LmsrMarketMakerContractData.address,
+      LmsrMarketMakerContractData.abi,
       this.managerEthersWallet,
     );
 
-    this.fixedProductAMM = new ethers.Contract(
-      FixedProductMarketMakerContract.address,
-      FixedProductMarketMakerContract.abi,
+    this.conditionTokensContract = new ethers.Contract(
+      ConditionTokenContractData.address,
+      ConditionTokenContractData.abi,
       this.managerEthersWallet,
     );
   }
 
   async createMarket(
-    collateralToken: CryptoTokenEnum,
-    initialLiquidity: number,
+    collateralTokenAddress = Weth9CollateralToken.address,
+    question: string,
     outcomes: PredictionOutcome[],
   ) {
-    const trx = await this.marketMakerFactory.createMarketMaker(
-      collateralToken.toString(),
-      initialLiquidity,
-      outcomes.map((item) => item.title),
+    const questionHash = this.toKeccakHash(question);
+    const trx = await this.conditionTokensContract.prepareCondition(
+      collateralTokenAddress,
+      questionHash,
+      outcomes.length,
     );
     await trx.wait();
-    return trx.hash;
-  }
+    // trx.hash; // maybe use this in database? (not necessary though)
 
-  async buyOutcomeToken(
-    marketId: number,
-    choice: PredictionOutcome,
-    amount: number,
-  ) {
-    const trx = await this.fixedProductAMM.butOutcomeToken(
-      choice.title,
-      amount,
-    ); // FIXME: ABI seems wrong
-    await trx.await();
-    return trx.hash;
+    const conditionId = await this.conditionTokensContract.getConditionId(
+      collateralTokenAddress,
+      questionHash,
+      outcomes.length,
+    );
+    // TODO: Checkout how to get output value.
   }
 
   async getBlocksTransactions(blockNumber: number) {
-    // Get block details
     const block = await this.provider.getBlock(blockNumber);
-    console.log(`Block Number: ${block.number}`);
-    console.log(`Block Hash: ${block.hash}`);
-    console.log(
-      `Timestamp: ${new Date(block.timestamp * 1000).toLocaleString()}`,
-    );
-
-    // Get transactions in the block
-    for (const txHash of block.transactions) {
-      const transaction = await this.provider.getTransaction(txHash);
-      console.log(`Transaction Hash: ${transaction.hash}`);
-      console.log(`From: ${transaction.from}`);
-      console.log(`To: ${transaction.to}`);
-      console.log(`Value: ${ethers.formatEther(transaction.value)} ETH`);
-      console.log('---');
-    }
 
     return {
       blockNumber: block.number,
