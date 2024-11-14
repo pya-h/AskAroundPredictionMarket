@@ -1,22 +1,24 @@
 import { Injectable } from '@nestjs/common';
-import { PredictionOutcome } from 'src/binary-prediction/entities/outcome.entity';
+import { PredictionOutcome } from '../binary-prediction/entities/outcome.entity';
 import { ethers } from 'ethers';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Chain } from './entities/chain.entity';
 import { Repository } from 'typeorm';
 import { BlockchainWallet } from './entities/blockchain-wallet.entity';
-import {
-  Weth9CollateralToken,
-  LmsrMarketMakerContractData,
-} from './contracts/market.contract';
+import { LmsrMarketMakerContractData } from './contracts/market.contracts';
+import { Weth9CollateralToken } from './contracts/collateral-tokens.contracts';
+import { ConditionTokenContractData } from './contracts/ctf.contracts';
+import { OracleContractData } from './contracts/oracle.contracts';
+import Web3 from 'web3';
+import { ConfigService } from '../config/config.service';
 
-import { ConditionTokenContractData } from './contracts/ctf.contract';
 @Injectable()
 export class BlockchainService {
   private provider: ethers.JsonRpcProvider;
   private managerEthersWallet: ethers.Wallet;
   private marketMakerFactoryContract: ethers.Contract;
   private conditionTokensContract: ethers.Contract;
+  private collateralTokenContract: ethers.Contract;
 
   toKeccakHash(data: string) {
     return ethers.keccak256(ethers.toUtf8Bytes(data));
@@ -31,6 +33,7 @@ export class BlockchainService {
     private readonly chainRepository: Repository<Chain>,
     @InjectRepository(BlockchainWallet)
     private readonly blockchainWalletRepository: Repository<BlockchainWallet>,
+    private readonly configService: ConfigService,
   ) {
     this.init().catch((ex) =>
       console.error('Failed to init blockchain service:', ex),
@@ -38,13 +41,14 @@ export class BlockchainService {
   }
 
   async init() {
-    const sepoliaNetwork = await this.getChain(1337); // TODO: Decide how to set this.
-    this.provider = new ethers.JsonRpcProvider(sepoliaNetwork.rpcUrl);
+    const localTestnet = await this.getChain(1337); // TODO: Decide how to set this.
+    this.provider = new ethers.JsonRpcProvider(localTestnet.rpcUrl);
     const wallet = await this.blockchainWalletRepository.findOneBy({
       userId: 0,
     }); // TODO: Modify this, and also add relations to user.
-    this.managerEthersWallet = new ethers.Wallet( // TODO: Modiy this to galache wallet.
-      wallet.getPrivateKey(),
+    this.managerEthersWallet = new ethers.Wallet(
+      // wallet.getPrivateKey(), // TODO: Change this later
+      this.configService.get('MANAGER_WALLET_PRIVATE'),
       this.provider,
     );
     this.marketMakerFactoryContract = new ethers.Contract(
@@ -58,30 +62,140 @@ export class BlockchainService {
       ConditionTokenContractData.abi,
       this.managerEthersWallet,
     );
+
+    this.collateralTokenContract = new ethers.Contract(
+      Weth9CollateralToken.address,
+      Weth9CollateralToken.abi,
+      this.managerEthersWallet,
+    );
   }
 
   async createMarket(
-    collateralTokenAddress = Weth9CollateralToken.address,
     question: string,
     outcomes: PredictionOutcome[],
+    initialLiquidityInEth: number,
   ) {
+    const initialLiquidity = ethers.parseEther(
+      initialLiquidityInEth.toString(),
+    );
     const questionHash = this.toKeccakHash(question);
     const trx = await this.conditionTokensContract.prepareCondition(
-      collateralTokenAddress,
+      OracleContractData.address,
       questionHash,
       outcomes.length,
     );
     await trx.wait();
+    console.log('Prepare condition finished, trx: ', trx);
     // trx.hash; // maybe use this in database? (not necessary though)
 
     const conditionId = await this.conditionTokensContract.getConditionId(
-      collateralTokenAddress,
+      Weth9CollateralToken.address,
       questionHash,
       outcomes.length,
     );
-    // TODO: Checkout how to get output value.
+    console.warn('Condition id = ', conditionId);
+
+    // const collateralDepositTx = await this.collateralTokenContract.deposit({
+    //   value: initialLiquidity,
+    //   nonce: await this.managerEthersWallet.getNonce(),
+    // });
+    // await collateralDepositTx.wait();
+    // console.log(
+    //   'Collateral token deposit completed, trx:',
+    //   collateralDepositTx,
+    // );
+
+    // const approveTx = await this.collateralTokenContract.approve(
+    //   LmsrMarketMakerContractData.address,
+    //   initialLiquidity,
+    // );
+    // await approveTx.wait();
+    console.warn('Liquidity deposit completed and approved.');
+
+    const lmsrFactoryTx =
+      await this.marketMakerFactoryContract.createLMSRMarketMaker(
+        ConditionTokenContractData.address,
+        Weth9CollateralToken.address,
+        [conditionId],
+        0,
+        '0x0000000000000000000000000000000000000000',
+        initialLiquidity,
+        { nonce: await this.managerEthersWallet.getNonce(), gasLimit: 983411n },
+      );
+
+    await lmsrFactoryTx.wait();
+    console.log('LMSR Market creation finished, trx: ', trx);
   }
 
+  async createMarketWeb3js(
+    question: string,
+    outcomes: PredictionOutcome[],
+    initialLiquidityInEth: number,
+  ) {
+    const localTestnet = await this.getChain(1337); // TODO: Decide how to set this.
+    const web3 = new Web3(localTestnet.rpcUrl);
+
+    const initialLiquidity = web3.utils.toWei(
+      initialLiquidityInEth.toString(),
+      'ether',
+    );
+    const questionHash = web3.utils.keccak256(question);
+    const conditionTokensContract = new web3.eth.Contract(
+      ConditionTokenContractData.abi,
+      ConditionTokenContractData.address,
+    );
+    const trx = await conditionTokensContract.methods
+      .prepareCondition(
+        OracleContractData.address,
+        questionHash,
+        outcomes.length,
+      )
+      .send({
+        from: this.configService.get('MANAGER_WALLET_PUBLIC'),
+      });
+
+    console.log('Prepare condition finished, trx:', trx);
+
+    const conditionId = await conditionTokensContract.methods
+      .getConditionId(
+        Weth9CollateralToken.address,
+        questionHash,
+        outcomes.length,
+      )
+      .call();
+
+    console.warn('Condition id =', conditionId);
+    const marketMakerFactoryContract = new web3.eth.Contract(
+      LmsrMarketMakerContractData.abi,
+      LmsrMarketMakerContractData.address,
+    );
+    const gas = await marketMakerFactoryContract.methods
+      .createLMSRMarketMaker(
+        ConditionTokenContractData.address,
+        Weth9CollateralToken.address,
+        [conditionId],
+        0,
+        '0x0000000000000000000000000000000000000000',
+        initialLiquidity,
+      )
+      .estimateGas({ from: this.configService.get('MANAGER_WALLET_PUBLIC') });
+
+    const lmsrFactoryTx = await marketMakerFactoryContract.methods
+      .createLMSRMarketMaker(
+        ConditionTokenContractData.address,
+        Weth9CollateralToken.address,
+        [conditionId],
+        0,
+        '0x0000000000000000000000000000000000000000',
+        initialLiquidity,
+      )
+      .send({
+        from: this.configService.get('MANAGER_WALLET_PUBLIC'),
+        gas: gas.toString(),
+      });
+
+    console.log('LMSR Market creation finished, trx:', lmsrFactoryTx);
+  }
   async getBlocksTransactions(blockNumber: number) {
     const block = await this.provider.getBlock(blockNumber);
 

@@ -1,0 +1,13 @@
+@host = http://localhost:3000
+
+### create new market
+POST  {{host}}/binary-prediction/
+Content-Type: application/json
+
+{
+    "question": "sa1z1oaal",
+    "initialLiquidity": 1,
+    "outcomes": [
+        "Yes", "No"
+    ]
+}
