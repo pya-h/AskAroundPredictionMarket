@@ -73,22 +73,24 @@ export class BlockchainService {
     question: string,
     outcomes: PredictionOutcome[],
     initialLiquidityInEth: number,
+    oracleAddress: string = OracleContractData.address,
   ) {
     const initialLiquidity = ethers.parseEther(
       initialLiquidityInEth.toString(),
     );
     const questionHash = this.toKeccakHash(question);
-    const trx = await this.conditionTokensContract.prepareCondition(
-      OracleContractData.address,
-      questionHash,
-      outcomes.length,
-    );
-    await trx.wait();
-    console.log('Prepare condition finished, trx: ', trx);
+    const prepareConditionTx =
+      await this.conditionTokensContract.prepareCondition(
+        oracleAddress,
+        questionHash,
+        outcomes.length,
+      );
+    await prepareConditionTx.wait();
+    console.log('Prepare condition finished, trx: ', prepareConditionTx);
     // trx.hash; // maybe use this in database? (not necessary though)
 
     const conditionId = await this.conditionTokensContract.getConditionId(
-      OracleContractData.address,
+      oracleAddress,
       questionHash,
       outcomes.length,
     );
@@ -123,7 +125,14 @@ export class BlockchainService {
       );
 
     await lmsrFactoryTx.wait();
-    console.log('LMSR Market creation finished, trx: ', trx);
+    console.log('LMSR Market creation finished, trx: ', lmsrFactoryTx);
+
+    return {
+      conditionId,
+      prepareConditionTxHash: prepareConditionTx.hash,
+      createMarketTxHash: lmsrFactoryTx.hash,
+      ammType: 'LMSR',
+    };
   }
 
   async getBlocksTransactions(blockNumber: number) {

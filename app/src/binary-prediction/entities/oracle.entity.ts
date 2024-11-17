@@ -1,14 +1,11 @@
 import { Column, Entity, JoinColumn, ManyToMany } from 'typeorm';
 import { BaseEntity } from '../../core/base.entity';
-import { Chain } from './chain.entity';
+import { Chain } from '../../blockchain/entities/chain.entity';
 
 @Entity()
-export class CryptocurrencyToken extends BaseEntity {
-  @Column({ type: 'varchar', length: 64 })
+export class Oracle extends BaseEntity {
+  @Column({ type: 'varchar', length: 256 })
   name: string;
-
-  @Column({ type: 'varchar', length: 16 })
-  symbol: string;
 
   @Column({ name: 'chain_id' })
   chainId: number;
@@ -20,9 +17,9 @@ export class CryptocurrencyToken extends BaseEntity {
   @Column()
   address: string;
 
-  @Column({ type: 'jsonb', nullable: true })
-  abi?: Record<string, unknown>[];
-
   @Column({ nullable: true })
   icon?: string;
+
+  @Column({ nullable: true })
+  description?: string;
 }
