@@ -5,7 +5,7 @@ POST  {{host}}/binary-prediction/
 Content-Type: application/json
 
 {
-    "question": "sa1z1oaal",
+    "question": "My first approved question",
     "initialLiquidity": 1,
     "outcomes": [
         "Yes", "No"
