@@ -25,7 +25,7 @@ export class BinaryPredictionService {
         this.predictionOutcomeRepository.create({ title: outcome }),
       ),
     );
-    return this.blockchainService.createMarketWeb3js(
+    return this.blockchainService.createMarket(
       question,
       predictionOutcomes,
       initialLiquidityInEth,

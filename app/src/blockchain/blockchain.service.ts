@@ -9,7 +9,6 @@ import { LmsrMarketMakerContractData } from './contracts/market.contracts';
 import { Weth9CollateralToken } from './contracts/collateral-tokens.contracts';
 import { ConditionTokenContractData } from './contracts/ctf.contracts';
 import { OracleContractData } from './contracts/oracle.contracts';
-import Web3 from 'web3';
 import { ConfigService } from '../config/config.service';
 
 @Injectable()
@@ -89,27 +88,27 @@ export class BlockchainService {
     // trx.hash; // maybe use this in database? (not necessary though)
 
     const conditionId = await this.conditionTokensContract.getConditionId(
-      Weth9CollateralToken.address,
+      OracleContractData.address,
       questionHash,
       outcomes.length,
     );
     console.warn('Condition id = ', conditionId);
 
-    // const collateralDepositTx = await this.collateralTokenContract.deposit({
-    //   value: initialLiquidity,
-    //   nonce: await this.managerEthersWallet.getNonce(),
-    // });
-    // await collateralDepositTx.wait();
-    // console.log(
-    //   'Collateral token deposit completed, trx:',
-    //   collateralDepositTx,
-    // );
+    const collateralDepositTx = await this.collateralTokenContract.deposit({
+      value: initialLiquidity,
+      nonce: await this.managerEthersWallet.getNonce(),
+    });
+    await collateralDepositTx.wait();
+    console.log(
+      'Collateral token deposit completed, trx:',
+      collateralDepositTx,
+    );
 
-    // const approveTx = await this.collateralTokenContract.approve(
-    //   LmsrMarketMakerContractData.address,
-    //   initialLiquidity,
-    // );
-    // await approveTx.wait();
+    const approveTx = await this.collateralTokenContract.approve(
+      LmsrMarketMakerContractData.address,
+      initialLiquidity,
+    );
+    await approveTx.wait();
     console.warn('Liquidity deposit completed and approved.');
 
     const lmsrFactoryTx =
@@ -120,82 +119,13 @@ export class BlockchainService {
         0,
         '0x0000000000000000000000000000000000000000',
         initialLiquidity,
-        { nonce: await this.managerEthersWallet.getNonce(), gasLimit: 983411n },
+        { from: this.managerEthersWallet.address },
       );
 
     await lmsrFactoryTx.wait();
     console.log('LMSR Market creation finished, trx: ', trx);
   }
 
-  async createMarketWeb3js(
-    question: string,
-    outcomes: PredictionOutcome[],
-    initialLiquidityInEth: number,
-  ) {
-    const localTestnet = await this.getChain(1337); // TODO: Decide how to set this.
-    const web3 = new Web3(localTestnet.rpcUrl);
-
-    const initialLiquidity = web3.utils.toWei(
-      initialLiquidityInEth.toString(),
-      'ether',
-    );
-    const questionHash = web3.utils.keccak256(question);
-    const conditionTokensContract = new web3.eth.Contract(
-      ConditionTokenContractData.abi,
-      ConditionTokenContractData.address,
-    );
-    const trx = await conditionTokensContract.methods
-      .prepareCondition(
-        OracleContractData.address,
-        questionHash,
-        outcomes.length,
-      )
-      .send({
-        from: this.configService.get('MANAGER_WALLET_PUBLIC'),
-      });
-
-    console.log('Prepare condition finished, trx:', trx);
-
-    const conditionId = await conditionTokensContract.methods
-      .getConditionId(
-        Weth9CollateralToken.address,
-        questionHash,
-        outcomes.length,
-      )
-      .call();
-
-    console.warn('Condition id =', conditionId);
-    const marketMakerFactoryContract = new web3.eth.Contract(
-      LmsrMarketMakerContractData.abi,
-      LmsrMarketMakerContractData.address,
-    );
-    const gas = await marketMakerFactoryContract.methods
-      .createLMSRMarketMaker(
-        ConditionTokenContractData.address,
-        Weth9CollateralToken.address,
-        [conditionId],
-        0,
-        '0x0000000000000000000000000000000000000000',
-        initialLiquidity,
-      )
-      .estimateGas({ from: this.configService.get('MANAGER_WALLET_PUBLIC') });
-
-    const lmsrFactoryTx = await marketMakerFactoryContract.methods
-      .createLMSRMarketMaker(
-        ConditionTokenContractData.address,
-        Weth9CollateralToken.address,
-        [conditionId],
-        0,
-        '0x0000000000000000000000000000000000000000',
-        initialLiquidity,
-      )
-      .send({
-        from: this.configService.get('MANAGER_WALLET_PUBLIC'),
-        gas: gas.toString(),
-      });
-
-    console.log('LMSR Market creation finished, trx:', lmsrFactoryTx);
-  }
   async getBlocksTransactions(blockNumber: number) {
     const block = await this.provider.getBlock(blockNumber);
 
