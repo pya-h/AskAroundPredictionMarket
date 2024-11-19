@@ -1,19 +1,24 @@
-import { Column, Entity, JoinColumn, ManyToMany } from 'typeorm';
+import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../core/base.entity';
 import { Chain } from './chain.entity';
+import { CryptoTokenEnum } from '../enums/crypto-token.enum';
 
 @Entity()
 export class CryptocurrencyToken extends BaseEntity {
   @Column({ type: 'varchar', length: 64 })
   name: string;
 
-  @Column({ type: 'varchar', length: 16 })
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: CryptoTokenEnum.WETH9.toString(),
+  })
   symbol: string;
 
   @Column({ name: 'chain_id' })
   chainId: number;
 
-  @ManyToMany(() => Chain)
+  @ManyToOne(() => Chain)
   @JoinColumn({ name: 'chain_id' })
   chain: Chain;
 

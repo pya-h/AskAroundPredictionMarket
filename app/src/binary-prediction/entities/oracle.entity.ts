@@ -1,4 +1,4 @@
-import { Column, Entity, JoinColumn, ManyToMany } from 'typeorm';
+import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../core/base.entity';
 import { Chain } from '../../blockchain/entities/chain.entity';
 
@@ -10,7 +10,7 @@ export class Oracle extends BaseEntity {
   @Column({ name: 'chain_id' })
   chainId: number;
 
-  @ManyToMany(() => Chain)
+  @ManyToOne(() => Chain)
   @JoinColumn({ name: 'chain_id' })
   chain: Chain;
 

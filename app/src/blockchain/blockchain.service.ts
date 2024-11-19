@@ -1,24 +1,25 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PredictionOutcome } from '../binary-prediction/entities/outcome.entity';
 import { ethers } from 'ethers';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Chain } from './entities/chain.entity';
 import { Repository } from 'typeorm';
 import { BlockchainWallet } from './entities/blockchain-wallet.entity';
-import { LmsrMarketMakerContractData } from './contracts/market.contracts';
-import { Weth9CollateralToken } from './contracts/collateral-tokens.contracts';
 import { ConditionTokenContractData } from './contracts/ctf.contracts';
-import { OracleContractData } from './contracts/oracle.contracts';
-import { ConfigService } from '../config/config.service';
 import { CryptocurrencyToken } from './entities/cryptocurrency-token.entity';
+import { Oracle } from '../binary-prediction/entities/oracle.entity';
+import { MarketMakerFactory } from './entities/market-maker-factory.entity';
+import { CryptoTokenEnum } from './enums/crypto-token.enum';
 
 @Injectable()
 export class BlockchainService {
   private provider: ethers.JsonRpcProvider;
   private managerEthersWallet: ethers.Wallet;
-  private marketMakerFactoryContract: ethers.Contract;
   private conditionalTokensContract: ethers.Contract;
-  private collateralTokenContract: ethers.Contract;
 
   toKeccakHash(data: string) {
     return ethers.keccak256(ethers.toUtf8Bytes(data));
@@ -33,7 +34,10 @@ export class BlockchainService {
     private readonly chainRepository: Repository<Chain>,
     @InjectRepository(BlockchainWallet)
     private readonly blockchainWalletRepository: Repository<BlockchainWallet>,
-    private readonly configService: ConfigService,
+    @InjectRepository(MarketMakerFactory)
+    private readonly marketMakerFactoryRepository: Repository<MarketMakerFactory>,
+    @InjectRepository(CryptocurrencyToken)
+    private readonly cryptocurrencyTokenRepository: Repository<CryptocurrencyToken>,
   ) {
     this.init().catch((ex) =>
       console.error('Failed to init blockchain service:', ex),
@@ -47,25 +51,13 @@ export class BlockchainService {
       userId: 0,
     }); // TODO: Modify this, and also add relations to user.
     this.managerEthersWallet = new ethers.Wallet(
-      // wallet.getPrivateKey(), // TODO: Change this later
-      this.configService.get('MANAGER_WALLET_PRIVATE'),
+      wallet.getPrivateKey(),
       this.provider,
-    );
-    this.marketMakerFactoryContract = new ethers.Contract(
-      LmsrMarketMakerContractData.address,
-      LmsrMarketMakerContractData.abi,
-      this.managerEthersWallet,
     );
 
     this.conditionalTokensContract = new ethers.Contract(
       ConditionTokenContractData.address,
       ConditionTokenContractData.abi,
-      this.managerEthersWallet,
-    );
-
-    this.collateralTokenContract = new ethers.Contract(
-      Weth9CollateralToken.address,
-      Weth9CollateralToken.abi,
       this.managerEthersWallet,
     );
   }
@@ -74,38 +66,91 @@ export class BlockchainService {
     return '0x0000000000000000000000000000000000000000000000000000000000000000';
   }
 
+  async getCurrentChainId() {
+    return Number((await this.provider.getNetwork()).chainId);
+  }
+
   getPrimaryAddresses(num: number, specificLength: number = 64) {
     return `0x${'0'.repeat(specificLength - num.toString().length)}${num}`;
   }
 
+  async getDefaultMarketMaker(chainId?: number) {
+    return this.marketMakerFactoryRepository.findOne({
+      where: {
+        chainId: chainId || (await this.getCurrentChainId()),
+      },
+      order: {
+        id: 'ASC',
+      },
+    });
+  }
+
   async createMarket(
+    marketMakerIdentifier: number | MarketMakerFactory,
+    collateralTokenSymbol: CryptoTokenEnum,
     question: string,
     outcomes: PredictionOutcome[],
     initialLiquidityInEth: number,
-    oracleAddress: string = OracleContractData.address,
+    oracle: Oracle,
   ) {
+    const currentChainId = await this.getCurrentChainId();
+
+    const [marketMaker, collateralToken] = await Promise.all([
+      marketMakerIdentifier instanceof MarketMakerFactory
+        ? marketMakerIdentifier
+        : this.marketMakerFactoryRepository.findOneBy({
+            id: marketMakerIdentifier,
+            chainId: currentChainId,
+          }),
+      this.cryptocurrencyTokenRepository.findOneBy({
+        chainId: currentChainId, // TODO: Check this works fine?
+        symbol: collateralTokenSymbol.toString(),
+      }),
+    ]);
+    if (!marketMaker) {
+      throw new NotFoundException("This kind of market maker doesn't exist!");
+    }
+    if (marketMaker.maxSupportedOutcomes < outcomes.length)
+      throw new BadRequestException(
+        `This AMM doesn't support more than ${marketMaker.maxSupportedOutcomes} outcomes.`,
+      );
+
+    if (!collateralToken?.abi?.length)
+      // TODO: check this works fine, too
+      throw new BadRequestException(
+        'Unfortunately this cryptocurrency is not supported to be used as collateral token in this network.',
+      );
+    const marketMakerFactoryContract = new ethers.Contract(
+        marketMaker.address,
+        marketMaker.abi,
+        this.managerEthersWallet,
+      ),
+      collateralTokenContract = new ethers.Contract(
+        collateralToken.address,
+        collateralToken.abi,
+        this.managerEthersWallet,
+      );
     const initialLiquidity = ethers.parseEther(
       initialLiquidityInEth.toString(),
     );
     const questionHash = this.toKeccakHash(question);
     const prepareConditionTx =
       await this.conditionalTokensContract.prepareCondition(
-        oracleAddress,
+        oracle.address,
         questionHash,
         outcomes.length,
       );
     await prepareConditionTx.wait();
     console.log('Prepare condition finished, trx: ', prepareConditionTx);
-    // trx.hash; // maybe use this in database? (not necessary though)
 
     const conditionId = await this.conditionalTokensContract.getConditionId(
-      oracleAddress,
+      oracle.address,
       questionHash,
       outcomes.length,
     );
     console.warn('Condition id = ', conditionId);
 
-    const collateralDepositTx = await this.collateralTokenContract.deposit({
+    const collateralDepositTx = await collateralTokenContract.deposit({
       value: initialLiquidity,
       nonce: await this.managerEthersWallet.getNonce(),
     });
@@ -115,17 +160,17 @@ export class BlockchainService {
       collateralDepositTx,
     );
 
-    const approveTx = await this.collateralTokenContract.approve(
-      LmsrMarketMakerContractData.address,
+    const approveTx = await collateralTokenContract.approve(
+      marketMaker.address,
       initialLiquidity,
     );
     await approveTx.wait();
     console.warn('Liquidity deposit completed and approved.');
 
     const lmsrFactoryTx =
-      await this.marketMakerFactoryContract.createLMSRMarketMaker(
+      await marketMakerFactoryContract.createLMSRMarketMaker(
         ConditionTokenContractData.address,
-        Weth9CollateralToken.address,
+        collateralToken.address,
         [conditionId], // TODO: Maybe write another method to create multiple markets at the same time?
         0,
         '0x0000000000000000000000000000000000000000',

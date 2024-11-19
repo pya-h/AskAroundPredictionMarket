@@ -4,6 +4,7 @@ import { ConditionalToken } from './conditional-token.entity';
 import { CryptocurrencyToken } from '../../blockchain/entities/cryptocurrency-token.entity';
 import { Oracle } from './oracle.entity';
 import { MarketMakerFactory } from '../../blockchain/entities/market-maker-factory.entity';
+import { Chain } from '../../blockchain/entities/chain.entity';
 
 @Entity()
 export class BinaryPredictionMarket extends BaseEntity {
@@ -29,6 +30,13 @@ export class BinaryPredictionMarket extends BaseEntity {
   @ManyToOne(() => Oracle, { onDelete: 'NO ACTION' })
   @JoinColumn({ name: 'oracle_id' })
   oracle: Oracle;
+
+  @Column({ name: 'chain_id' })
+  chainId: number;
+
+  @ManyToOne(() => Chain)
+  @JoinColumn({ name: 'chain_id' })
+  chain: Chain;
 
   @Column()
   question: string;

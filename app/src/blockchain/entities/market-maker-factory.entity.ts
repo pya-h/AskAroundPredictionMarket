@@ -1,5 +1,6 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../core/base.entity';
+import { Chain } from './chain.entity';
 
 @Entity()
 export class MarketMakerFactory extends BaseEntity {
@@ -8,6 +9,13 @@ export class MarketMakerFactory extends BaseEntity {
 
   @Column({ name: 'address', type: 'varchar', length: 128 })
   address: string;
+
+  @Column({ name: 'chain_id' })
+  chainId: number;
+
+  @ManyToOne(() => Chain)
+  @JoinColumn({ name: 'chain_id' })
+  chain: Chain;
 
   @Column({ type: 'jsonb' })
   abi: Record<string, unknown>[];
