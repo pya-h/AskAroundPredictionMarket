@@ -10,13 +10,14 @@ import { Weth9CollateralToken } from './contracts/collateral-tokens.contracts';
 import { ConditionTokenContractData } from './contracts/ctf.contracts';
 import { OracleContractData } from './contracts/oracle.contracts';
 import { ConfigService } from '../config/config.service';
+import { CryptocurrencyToken } from './entities/cryptocurrency-token.entity';
 
 @Injectable()
 export class BlockchainService {
   private provider: ethers.JsonRpcProvider;
   private managerEthersWallet: ethers.Wallet;
   private marketMakerFactoryContract: ethers.Contract;
-  private conditionTokensContract: ethers.Contract;
+  private conditionalTokensContract: ethers.Contract;
   private collateralTokenContract: ethers.Contract;
 
   toKeccakHash(data: string) {
@@ -56,7 +57,7 @@ export class BlockchainService {
       this.managerEthersWallet,
     );
 
-    this.conditionTokensContract = new ethers.Contract(
+    this.conditionalTokensContract = new ethers.Contract(
       ConditionTokenContractData.address,
       ConditionTokenContractData.abi,
       this.managerEthersWallet,
@@ -67,6 +68,14 @@ export class BlockchainService {
       Weth9CollateralToken.abi,
       this.managerEthersWallet,
     );
+  }
+
+  get zeroAddress() {
+    return '0x0000000000000000000000000000000000000000000000000000000000000000';
+  }
+
+  getPrimaryAddresses(num: number, specificLength: number = 64) {
+    return `0x${'0'.repeat(specificLength - num.toString().length)}${num}`;
   }
 
   async createMarket(
@@ -80,7 +89,7 @@ export class BlockchainService {
     );
     const questionHash = this.toKeccakHash(question);
     const prepareConditionTx =
-      await this.conditionTokensContract.prepareCondition(
+      await this.conditionalTokensContract.prepareCondition(
         oracleAddress,
         questionHash,
         outcomes.length,
@@ -89,7 +98,7 @@ export class BlockchainService {
     console.log('Prepare condition finished, trx: ', prepareConditionTx);
     // trx.hash; // maybe use this in database? (not necessary though)
 
-    const conditionId = await this.conditionTokensContract.getConditionId(
+    const conditionId = await this.conditionalTokensContract.getConditionId(
       oracleAddress,
       questionHash,
       outcomes.length,
@@ -117,7 +126,7 @@ export class BlockchainService {
       await this.marketMakerFactoryContract.createLMSRMarketMaker(
         ConditionTokenContractData.address,
         Weth9CollateralToken.address,
-        [conditionId],
+        [conditionId], // TODO: Maybe write another method to create multiple markets at the same time?
         0,
         '0x0000000000000000000000000000000000000000',
         initialLiquidity,
@@ -133,6 +142,52 @@ export class BlockchainService {
       createMarketTxHash: lmsrFactoryTx.hash,
       ammType: 'LMSR',
     };
+  }
+
+  outcomeIndexToIndexSet(outcomeIndices: number | number[]) {
+    if (!(outcomeIndices instanceof Array)) {
+      return parseInt((10 ** +outcomeIndices).toString(), 2);
+    }
+    let value = 0;
+    for (const index of outcomeIndices) {
+      value += parseInt((10 ** index).toString(), 2);
+    }
+    return value;
+  }
+
+  getCollectionId(
+    conditionId: string,
+    possibleOutcomeIndices: number | number[],
+    parentCollectionId: string | null = null,
+  ) {
+    return this.conditionalTokensContract.getCollectionId(
+      parentCollectionId || this.zeroAddress,
+      conditionId,
+      this.outcomeIndexToIndexSet(possibleOutcomeIndices),
+    );
+  }
+
+  getOutcomeSlotsCount(conditionId: string) {
+    return this.conditionalTokensContract.getOutcomeSlotCount(conditionId);
+  }
+
+  async validateMarketCreation(
+    conditionId: string,
+    marketOutcomesCount: number = 2,
+  ) {
+    return (
+      (await this.getOutcomeSlotsCount(conditionId)) === marketOutcomesCount
+    ); // As gnosis docs says, this is the proper way to validate the market creation operation, after calling prepareCondition.
+  }
+
+  async getPositionId(
+    collateralToken: CryptocurrencyToken,
+    collectionId: string,
+  ) {
+    return this.conditionalTokensContract.getPositionId(
+      collateralToken.address,
+      collectionId,
+    );
   }
 
   async getBlocksTransactions(blockNumber: number) {

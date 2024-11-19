@@ -17,6 +17,9 @@ export class Oracle extends BaseEntity {
   @Column()
   address: string;
 
+  @Column({ type: 'jsonb' })
+  abi: Record<string, unknown>[];
+
   @Column({ nullable: true })
   icon?: string;
 

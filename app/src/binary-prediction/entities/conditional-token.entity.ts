@@ -12,11 +12,11 @@ export class ConditionalToken extends BaseEntity {
   @JoinColumn({ name: 'market_id' })
   market: BinaryPredictionMarket;
 
-  @Column({ name: 'collection_id', type: 'integer' })
+  @Column({ name: 'collection_id' })
   collectionId: string;
 
-  @Column({ name: 'index_set' })
-  indexSet: number;
+  @Column({ name: 'token_index' })
+  tokenIndex: number;
 
   @Column({ name: 'prediction_outcome_id' })
   predictionOutcomeId: number;
