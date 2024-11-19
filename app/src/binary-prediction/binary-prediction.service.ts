@@ -1,4 +1,8 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { BinaryPredictionMarket } from './entities/market.entity';
 import { ILike, Repository } from 'typeorm';
@@ -8,6 +12,7 @@ import { CryptoTokenEnum } from '../blockchain/enums/crypto-token.enum';
 import { Oracle } from './entities/oracle.entity';
 import { ConditionalToken } from './entities/conditional-token.entity';
 import { OutcomeCollection } from './entities/outcome-collection.entity';
+import { MarketCategory } from './entities/market-category.entity';
 
 @Injectable()
 export class BinaryPredictionService {
@@ -22,6 +27,8 @@ export class BinaryPredictionService {
     private readonly conditionalTokenRepository: Repository<ConditionalToken>,
     @InjectRepository(OutcomeCollection)
     private readonly outcomeCollectionRepository: Repository<OutcomeCollection>,
+    @InjectRepository(MarketCategory)
+    private readonly marketCategoryRepository: Repository<MarketCategory>,
 
     private readonly blockchainService: BlockchainService,
   ) {}
@@ -54,11 +61,17 @@ export class BinaryPredictionService {
     );
   }
 
+  findCategoryById(id: number) {
+    return this.marketCategoryRepository.findOneBy({ id });
+  }
+
   async createNewMarket(
     question: string,
     outcomes: string[],
     initialLiquidityInEth: number,
     shouldResolveAt: Date,
+    categoryId?: number,
+    subject?: string,
   ) {
     const chainId = await this.blockchainService.getCurrentChainId();
     const [predictionOutcomes, marketMaker, oracle] = await Promise.all([
@@ -86,6 +99,10 @@ export class BinaryPredictionService {
       throw new ConflictException(
         'Something failed while creating market in the blockchain.',
       );
+
+    if (categoryId && !(await this.findCategoryById(categoryId)))
+      throw new BadRequestException('No such category!');
+
     const market = await this.binaryPredictionMarketRepository.save(
       this.binaryPredictionMarketRepository.create({
         conditionId: result.conditionId,
@@ -101,6 +118,8 @@ export class BinaryPredictionService {
         createMarketTxHash: result.createMarketTxHash,
         prepareConditionTxHash: result.prepareConditionTxHash,
         shouldResolveAt,
+        categoryId,
+        subject,
       }),
     );
     const conditionalTokens: ConditionalToken[] = Array(outcomes.length);

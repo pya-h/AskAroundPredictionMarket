@@ -1,5 +1,6 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post } from '@nestjs/common';
 import { BinaryPredictionService } from './binary-prediction.service';
+import { CreatePredictionMarketDto } from './dto/create-market.dto';
 
 @Controller('binary-prediction')
 export class BinaryPredictionController {
@@ -14,16 +15,23 @@ export class BinaryPredictionController {
       question,
       initialLiquidity,
       outcomes,
-    }: {
-      question: string;
-      initialLiquidity: number;
-      outcomes: string[];
-    },
+      resolveAt,
+      categoryId = null,
+      subject = null,
+    }: CreatePredictionMarketDto,
   ) {
     return this.binaryPredictionService.createNewMarket(
       question,
       outcomes,
       initialLiquidity,
+      resolveAt,
+      categoryId,
+      subject,
     );
+  }
+
+  @Get()
+  getMarkets() {
+
   }
 }

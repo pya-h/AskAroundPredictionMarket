@@ -8,6 +8,7 @@ import { BinaryPredictionController } from './binary-prediction.controller';
 import { Oracle } from './entities/oracle.entity';
 import { ConditionalToken } from './entities/conditional-token.entity';
 import { OutcomeCollection } from './entities/outcome-collection.entity';
+import { MarketCategory } from './entities/market-category.entity';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { OutcomeCollection } from './entities/outcome-collection.entity';
       Oracle,
       ConditionalToken,
       OutcomeCollection,
+      MarketCategory,
     ]),
     BlockchainModule,
   ],

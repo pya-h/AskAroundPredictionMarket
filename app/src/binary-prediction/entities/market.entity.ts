@@ -5,6 +5,7 @@ import { CryptocurrencyToken } from '../../blockchain/entities/cryptocurrency-to
 import { Oracle } from './oracle.entity';
 import { MarketMakerFactory } from '../../blockchain/entities/market-maker-factory.entity';
 import { Chain } from '../../blockchain/entities/chain.entity';
+import { MarketCategory } from './market-category.entity';
 
 @Entity()
 export class BinaryPredictionMarket extends BaseEntity {
@@ -38,11 +39,22 @@ export class BinaryPredictionMarket extends BaseEntity {
   @JoinColumn({ name: 'chain_id' })
   chain: Chain;
 
+  @Column({ name: 'category_id', nullable: true })
+  categoryId: number | null; // TODO: Cnsider null as a 'General' category, and live this column nullable,
+  // or Add a General Category via migrations and prevent this to be nullable. [Second one seems more logical]
+
+  @ManyToOne(() => MarketCategory)
+  @JoinColumn({ name: 'category_id' })
+  category: MarketCategory | null;
+
   @Column()
   question: string;
 
   @Column({ name: 'question_hash' })
   questionHash: string;
+
+  @Column({ name: 'subject', nullable: true, default: null })
+  subject: string | null; // This is actually a short name for the market, useful when listing markets to prevent the list being too wide.
 
   @Column()
   shouldResolveAt: Date;
