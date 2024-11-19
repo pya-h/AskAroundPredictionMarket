@@ -12,7 +12,7 @@ import { PredictionOutcome } from './outcome.entity';
 
 @Entity()
 export class OutcomeCollection extends BaseEntity {
-  //TODO: THINK: This or ConditionTokens?
+  //TODO: THINK: We should use this or ConditionalTokens?
   @Column({ name: 'market_id', type: 'integer' })
   marketId: number;
 
@@ -23,8 +23,8 @@ export class OutcomeCollection extends BaseEntity {
   @Column({ name: 'collection_id' })
   collectionId: string;
 
-  @Column({ name: 'index_set' })
-  index_set: number;
+  @Column({ name: 'index_set_dec' })
+  indexSetDecimal: number;
 
   @ManyToMany(() => PredictionOutcome, { eager: true })
   @JoinTable({

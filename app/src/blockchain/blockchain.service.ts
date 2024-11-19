@@ -18,7 +18,7 @@ import { CryptoTokenEnum } from './enums/crypto-token.enum';
 @Injectable()
 export class BlockchainService {
   private provider: ethers.JsonRpcProvider;
-  private managerEthersWallet: ethers.Wallet;
+  private operator: { wallet: BlockchainWallet; ethers: ethers.Wallet };
   private conditionalTokensContract: ethers.Contract;
 
   toKeccakHash(data: string) {
@@ -50,15 +50,15 @@ export class BlockchainService {
     const wallet = await this.blockchainWalletRepository.findOneBy({
       userId: 0,
     }); // TODO: Modify this, and also add relations to user.
-    this.managerEthersWallet = new ethers.Wallet(
-      wallet.getPrivateKey(),
-      this.provider,
-    );
+    this.operator = {
+      wallet,
+      ethers: new ethers.Wallet(wallet.getPrivateKey(), this.provider),
+    };
 
     this.conditionalTokensContract = new ethers.Contract(
       ConditionTokenContractData.address,
       ConditionTokenContractData.abi,
-      this.managerEthersWallet,
+      this.operator.ethers,
     );
   }
 
@@ -85,6 +85,21 @@ export class BlockchainService {
     });
   }
 
+  outcomeIndexToIndexSet(outcomeIndices: number | number[]) {
+    if (!(outcomeIndices instanceof Array)) {
+      return parseInt((10 ** +outcomeIndices).toString(), 2);
+    }
+    let value = 0;
+    for (const index of outcomeIndices) {
+      value += parseInt((10 ** index).toString(), 2);
+    }
+    return value;
+  }
+
+  getNumberOfOutcomeCollections(outcomesCount: number) {
+    return 2 ** outcomesCount;
+  }
+
   async createMarket(
     marketMakerIdentifier: number | MarketMakerFactory,
     collateralTokenSymbol: CryptoTokenEnum,
@@ -92,6 +107,7 @@ export class BlockchainService {
     outcomes: PredictionOutcome[],
     initialLiquidityInEth: number,
     oracle: Oracle,
+    shouldResolveAt: Date,
   ) {
     const currentChainId = await this.getCurrentChainId();
 
@@ -108,7 +124,7 @@ export class BlockchainService {
       }),
     ]);
     if (!marketMaker) {
-      throw new NotFoundException("This kind of market maker doesn't exist!");
+      throw new NotFoundException("This kind of AMM doesn't exist!");
     }
     if (marketMaker.maxSupportedOutcomes < outcomes.length)
       throw new BadRequestException(
@@ -123,12 +139,12 @@ export class BlockchainService {
     const marketMakerFactoryContract = new ethers.Contract(
         marketMaker.address,
         marketMaker.abi,
-        this.managerEthersWallet,
+        this.operator.ethers,
       ),
       collateralTokenContract = new ethers.Contract(
         collateralToken.address,
         collateralToken.abi,
-        this.managerEthersWallet,
+        this.operator.ethers,
       );
     const initialLiquidity = ethers.parseEther(
       initialLiquidityInEth.toString(),
@@ -152,7 +168,7 @@ export class BlockchainService {
 
     const collateralDepositTx = await collateralTokenContract.deposit({
       value: initialLiquidity,
-      nonce: await this.managerEthersWallet.getNonce(),
+      nonce: await this.operator.ethers.getNonce(),
     });
     await collateralDepositTx.wait();
     console.log(
@@ -175,29 +191,26 @@ export class BlockchainService {
         0,
         '0x0000000000000000000000000000000000000000',
         initialLiquidity,
-        { from: this.managerEthersWallet.address },
+        { from: this.operator.ethers.address },
       );
 
     await lmsrFactoryTx.wait();
     console.log('LMSR Market creation finished, trx: ', lmsrFactoryTx);
 
     return {
-      conditionId,
-      prepareConditionTxHash: prepareConditionTx.hash,
-      createMarketTxHash: lmsrFactoryTx.hash,
-      ammType: 'LMSR',
-    };
-  }
-
-  outcomeIndexToIndexSet(outcomeIndices: number | number[]) {
-    if (!(outcomeIndices instanceof Array)) {
-      return parseInt((10 ** +outcomeIndices).toString(), 2);
-    }
-    let value = 0;
-    for (const index of outcomeIndices) {
-      value += parseInt((10 ** index).toString(), 2);
-    }
-    return value;
+      conditionId: conditionId as string,
+      creatorId: this.operator.wallet.userId,
+      question,
+      questionHash,
+      marketMaker,
+      oracle,
+      collateralToken,
+      liquidity: initialLiquidity,
+      prepareConditionTxHash: prepareConditionTx.hash as string,
+      createMarketTxHash: lmsrFactoryTx.hash as string,
+      chainId: currentChainId,
+    }; // the input params are also returned, so in case any required changes happened [such as changing oracle or AMM due to some reason,
+    //  or increasing/decreasing initial liquidity or whatever], market entity data would be correct.
   }
 
   getCollectionId(
@@ -209,6 +222,18 @@ export class BlockchainService {
       parentCollectionId || this.zeroAddress,
       conditionId,
       this.outcomeIndexToIndexSet(possibleOutcomeIndices),
+    );
+  }
+
+  getCollectionIdByIndexSetValue(
+    conditionId: string,
+    indexSetValue: number,
+    parentCollectionId: string | null = null,
+  ) {
+    return this.conditionalTokensContract.getCollectionId(
+      parentCollectionId || this.zeroAddress,
+      conditionId,
+      indexSetValue,
     );
   }
 

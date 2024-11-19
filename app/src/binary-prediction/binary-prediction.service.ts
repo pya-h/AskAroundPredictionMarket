@@ -1,11 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { BinaryPredictionMarket } from './entities/market.entity';
-import { Repository } from 'typeorm';
+import { ILike, Repository } from 'typeorm';
 import { PredictionOutcome } from './entities/outcome.entity';
 import { BlockchainService } from '../blockchain/blockchain.service';
 import { CryptoTokenEnum } from '../blockchain/enums/crypto-token.enum';
 import { Oracle } from './entities/oracle.entity';
+import { ConditionalToken } from './entities/conditional-token.entity';
+import { OutcomeCollection } from './entities/outcome-collection.entity';
 
 @Injectable()
 export class BinaryPredictionService {
@@ -16,6 +18,11 @@ export class BinaryPredictionService {
     private readonly predictionOutcomeRepository: Repository<PredictionOutcome>,
     @InjectRepository(Oracle)
     private readonly oracleRepository: Repository<Oracle>,
+    @InjectRepository(ConditionalToken)
+    private readonly conditionalTokenRepository: Repository<ConditionalToken>,
+    @InjectRepository(OutcomeCollection)
+    private readonly outcomeCollectionRepository: Repository<OutcomeCollection>,
+
     private readonly blockchainService: BlockchainService,
   ) {}
 
@@ -31,17 +38,27 @@ export class BinaryPredictionService {
   }
 
   getPredictionOutcomes(outcomes: string[]) {
-    // TODO: First check wether there are previously created prediction outcomes with the same title.
-    return this.predictionOutcomeRepository.save(
-      outcomes.map((outcome) =>
-        this.predictionOutcomeRepository.create({ title: outcome }),
-      ),
+    return Promise.all(
+      outcomes.map(async (outcome) => {
+        const existingOutcome = await this.predictionOutcomeRepository.findOne({
+          where: {
+            title: ILike(outcome),
+          },
+        });
+        if (existingOutcome) return existingOutcome;
+
+        return this.predictionOutcomeRepository.save(
+          this.predictionOutcomeRepository.create({ title: outcome }),
+        );
+      }),
     );
   }
+
   async createNewMarket(
     question: string,
     outcomes: string[],
     initialLiquidityInEth: number,
+    shouldResolveAt: Date,
   ) {
     const chainId = await this.blockchainService.getCurrentChainId();
     const [predictionOutcomes, marketMaker, oracle] = await Promise.all([
@@ -50,21 +67,101 @@ export class BinaryPredictionService {
       this.getDefaultOracle(chainId),
     ]);
 
-    return this.blockchainService.createMarket(
+    const result = await this.blockchainService.createMarket(
       marketMaker,
       CryptoTokenEnum.WETH9,
       question,
       predictionOutcomes,
       initialLiquidityInEth,
       oracle,
+      shouldResolveAt,
     );
+
+    if (
+      !(await this.blockchainService.validateMarketCreation(
+        result.conditionId,
+        outcomes.length,
+      ))
+    )
+      throw new ConflictException(
+        'Something failed while creating market in the blockchain.',
+      );
+    const market = await this.binaryPredictionMarketRepository.save(
+      this.binaryPredictionMarketRepository.create({
+        conditionId: result.conditionId,
+        question: result.question,
+        questionHash: result.questionHash,
+        ammFactoryId: result.marketMaker.id,
+        oracleId: result.oracle.id,
+        chainId: result.chainId,
+        collateralTokenId: result.collateralToken.id,
+        initialLiquidity: result.liquidity,
+        liquidity: result.liquidity,
+        creatorId: result.creatorId,
+        createMarketTxHash: result.createMarketTxHash,
+        prepareConditionTxHash: result.prepareConditionTxHash,
+        shouldResolveAt,
+      }),
+    );
+    const conditionalTokens: ConditionalToken[] = Array(outcomes.length);
+    for (let i = 0; i < outcomes.length; i++) {
+      const collectionId = await this.blockchainService.getCollectionId(
+        market.conditionId,
+        i,
+      );
+      conditionalTokens[i] = this.conditionalTokenRepository.create({
+        collectionId,
+        marketId: market.id,
+        predictionOutcomeId: predictionOutcomes[i].id,
+        tokenIndex: i,
+      });
+    }
+    await this.conditionalTokenRepository.save(conditionalTokens);
+
+    await this.createAllCollections(market, predictionOutcomes); // TODO: You should select one approach: Using ConditionalToken || OutcomeCollection entity,
+  }
+
+  async createAllCollections(
+    market: BinaryPredictionMarket,
+    outcomes: PredictionOutcome[],
+  ) {
+    const numberOfCollections =
+      this.blockchainService.getNumberOfOutcomeCollections(outcomes.length);
+    const collections = (
+      await Promise.all(
+        Array(numberOfCollections)
+          .fill(null)
+          .map((_, i) =>
+            this.blockchainService.getCollectionIdByIndexSetValue(
+              market.conditionId,
+              i,
+            ),
+          ),
+      )
+    ).map((collectionId, indexSetDecimal) =>
+      this.outcomeCollectionRepository.create({
+        collectionId: collectionId as string,
+        indexSetDecimal,
+        marketId: market.id,
+      }),
+    );
+
+    const outcomeSet = [];
+    collections[0].possibleOutcomes = [];
+    for (let i = 0, ci = 1; i < outcomes.length; i++) {
+      for (let j = i; j < outcomes.length; j++) {
+        collections[ci++].possibleOutcomes = [...outcomeSet, outcomes[j]];
+      }
+      outcomeSet.push(outcomes[i]);
+    }
+    return this.outcomeCollectionRepository.save(collections);
   }
 
   resolveMarket() {
     // TODO:
   }
 
-  predict() {
+  trade() {
     // TODO:
   }
 }

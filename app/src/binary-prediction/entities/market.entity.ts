@@ -48,10 +48,10 @@ export class BinaryPredictionMarket extends BaseEntity {
   shouldResolveAt: Date;
 
   @Column({ type: 'decimal' })
-  initialLiquidity: number;
+  initialLiquidity: bigint;
 
   @Column({ type: 'decimal' })
-  liquidity: number;
+  liquidity: bigint;
 
   @Column({ name: 'collateral_token_id' })
   collateralTokenId: number;
