@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { BinaryPredictionMarket } from './entities/market.entity';
@@ -13,6 +14,7 @@ import { Oracle } from './entities/oracle.entity';
 import { ConditionalToken } from './entities/conditional-token.entity';
 import { OutcomeCollection } from './entities/outcome-collection.entity';
 import { MarketCategory } from './entities/market-category.entity';
+import { GetMarketsQuery } from './dto/get-markets.dto';
 
 @Injectable()
 export class BinaryPredictionService {
@@ -49,7 +51,7 @@ export class BinaryPredictionService {
       outcomes.map(async (outcome) => {
         const existingOutcome = await this.predictionOutcomeRepository.findOne({
           where: {
-            title: ILike(outcome),
+            title: ILike(outcome.trim()),
           },
         });
         if (existingOutcome) return existingOutcome;
@@ -182,5 +184,30 @@ export class BinaryPredictionService {
 
   trade() {
     // TODO:
+  }
+
+  async findMarkets(
+    { take, skip, category, subject }: GetMarketsQuery = {},
+    relations?: string[],
+  ) {
+    return this.binaryPredictionMarketRepository.find({
+      where: {
+        ...(category ? { categoryId: +category } : {}),
+        ...(subject ? { subject: ILike(subject.trim()) } : {}),
+      },
+      ...(take ? { take: +take } : {}),
+      ...(skip ? { skip: +skip } : {}),
+      ...(relations ? { relations } : {}),
+    });
+  }
+
+  async getMarket(id: number, relations?: string[]) {
+    const market = await this.binaryPredictionMarketRepository.findOne({
+      where: { id },
+      ...(relations ? { relations } : {}),
+    });
+
+    if (!market) throw new NotFoundException('No such market!');
+    return market;
   }
 }

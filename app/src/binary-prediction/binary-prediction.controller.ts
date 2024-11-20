@@ -1,6 +1,15 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { BinaryPredictionService } from './binary-prediction.service';
 import { CreatePredictionMarketDto } from './dto/create-market.dto';
+import { GetMarketsQuery } from './dto/get-markets.dto';
 
 @Controller('binary-prediction')
 export class BinaryPredictionController {
@@ -31,7 +40,16 @@ export class BinaryPredictionController {
   }
 
   @Get()
-  getMarkets() {
-
+  getMarkets(@Query() marketFeatures?: GetMarketsQuery) {
+    return this.binaryPredictionService.findMarkets(marketFeatures);
   }
+
+  @Get(':id')
+  getSpecificMarket(@Param('id', ParseIntPipe) id: string) {
+    return this.binaryPredictionService.getMarket(+id);
+  }
+
+  // TODO: Patch endpoint
+
+  // TODO: Delete endpoint (softDelete actually)
 }
