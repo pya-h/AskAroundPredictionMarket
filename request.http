@@ -13,7 +13,7 @@ Content-Type: application/json
 }
 
 ### create new market
-POST  {{host}}/binary-prediction/
+POST  {{host}}/prediction-market/
 Content-Type: application/json
 
 {
@@ -26,4 +26,4 @@ Content-Type: application/json
 }
 
 ### Get markets:
-GET  {{host}}/binary-prediction/
+GET  {{host}}/prediction-market/

@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PredictionOutcome } from '../binary-prediction/entities/outcome.entity';
+import { PredictionOutcome } from '../prediction-market/entities/outcome.entity';
 import { ethers } from 'ethers';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Chain } from './entities/chain.entity';
@@ -11,7 +11,7 @@ import { Repository } from 'typeorm';
 import { BlockchainWallet } from './entities/blockchain-wallet.entity';
 import { ConditionTokenContractData } from './contracts/ctf.contracts';
 import { CryptocurrencyToken } from './entities/cryptocurrency-token.entity';
-import { Oracle } from '../binary-prediction/entities/oracle.entity';
+import { Oracle } from '../prediction-market/entities/oracle.entity';
 import { MarketMakerFactory } from './entities/market-maker-factory.entity';
 import { CryptoTokenEnum } from './enums/crypto-token.enum';
 

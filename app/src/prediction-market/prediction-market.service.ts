@@ -182,10 +182,6 @@ export class PredictionMarketService {
     // TODO:
   }
 
-  trade() {
-    // TODO:
-  }
-
   async findMarkets(
     { take, skip, category, subject }: GetMarketsQuery = {},
     relations?: string[],
@@ -209,5 +205,19 @@ export class PredictionMarketService {
 
     if (!market) throw new NotFoundException('No such market!');
     return market;
+  }
+
+  async trade({
+    marketId,
+    amount,
+    outcomeIndex,
+    collateralLimit = 0.0,
+  }: {
+    marketId: number;
+    amount: number;
+    outcomeIndex: number;
+    collateralLimit?: number;
+  }) {
+
   }
 }

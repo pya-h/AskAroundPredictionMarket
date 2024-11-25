@@ -10,6 +10,7 @@ import {
 import { PredictionMarketService } from './prediction-market.service';
 import { CreatePredictionMarketDto } from './dto/create-market.dto';
 import { GetMarketsQuery } from './dto/get-markets.dto';
+import { TradeCoditionalToken } from './dto/trade-ctf.dto';
 
 @Controller('binary-prediction')
 export class PredictionMarketController {
@@ -52,4 +53,15 @@ export class PredictionMarketController {
   // TODO: Patch endpoint
 
   // TODO: Delete endpoint (softDelete actually)
+
+  @Post('buy-ctf')
+  buyOutcomeToken(@Body() tradeTokenDto: TradeCoditionalToken) {
+    return this.predictionMarketService.trade(tradeTokenDto);
+  }
+
+  @Post('sell-ctf')
+  sellOutcomeToken(@Body() tradeTokenDto: TradeCoditionalToken) {
+    tradeTokenDto.amount *= -1;
+    return this.predictionMarketService.trade(tradeTokenDto);
+  }
 }
