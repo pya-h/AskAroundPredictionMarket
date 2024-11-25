@@ -9,7 +9,7 @@ export class Chain extends BaseEntity {
   @Column({ type: 'varchar', length: 32 })
   name: string;
 
-  @Column()
+  @Column({ name: 'rpc_url' })
   rpcUrl: string;
 
   @Column({ nullable: true })

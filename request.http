@@ -1,4 +1,16 @@
+@ganache_rpc = http://127.0.0.1:8545
 @host = http://localhost:3000
+
+### Get ganache chain id
+POST {{ganache_rpc}}
+Content-Type: application/json
+
+{
+    "jsonrpc":"2.0",
+    "method":"eth_chainId",
+    "params":[],
+    "id":1
+}
 
 ### create new market
 POST  {{host}}/binary-prediction/
