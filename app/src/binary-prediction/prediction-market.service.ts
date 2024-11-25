@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { BinaryPredictionMarket } from './entities/market.entity';
+import { PredictionMarket } from './entities/market.entity';
 import { ILike, Repository } from 'typeorm';
 import { PredictionOutcome } from './entities/outcome.entity';
 import { BlockchainService } from '../blockchain/blockchain.service';
@@ -17,10 +17,10 @@ import { MarketCategory } from './entities/market-category.entity';
 import { GetMarketsQuery } from './dto/get-markets.dto';
 
 @Injectable()
-export class BinaryPredictionService {
+export class PredictionMarketService {
   constructor(
-    @InjectRepository(BinaryPredictionMarket)
-    private readonly binaryPredictionMarketRepository: Repository<BinaryPredictionMarket>,
+    @InjectRepository(PredictionMarket)
+    private readonly predictionMarketRepository: Repository<PredictionMarket>,
     @InjectRepository(PredictionOutcome)
     private readonly predictionOutcomeRepository: Repository<PredictionOutcome>,
     @InjectRepository(Oracle)
@@ -105,8 +105,8 @@ export class BinaryPredictionService {
     if (categoryId && !(await this.findCategoryById(categoryId)))
       throw new BadRequestException('No such category!');
 
-    const market = await this.binaryPredictionMarketRepository.save(
-      this.binaryPredictionMarketRepository.create({
+    const market = await this.predictionMarketRepository.save(
+      this.predictionMarketRepository.create({
         conditionId: result.conditionId,
         question: result.question,
         questionHash: result.questionHash,
@@ -143,7 +143,7 @@ export class BinaryPredictionService {
   }
 
   async createAllCollections(
-    market: BinaryPredictionMarket,
+    market: PredictionMarket,
     outcomes: PredictionOutcome[],
   ) {
     const numberOfCollections =
@@ -190,7 +190,7 @@ export class BinaryPredictionService {
     { take, skip, category, subject }: GetMarketsQuery = {},
     relations?: string[],
   ) {
-    return this.binaryPredictionMarketRepository.find({
+    return this.predictionMarketRepository.find({
       where: {
         ...(category ? { categoryId: +category } : {}),
         ...(subject ? { subject: ILike(subject.trim()) } : {}),
@@ -202,7 +202,7 @@ export class BinaryPredictionService {
   }
 
   async getMarket(id: number, relations?: string[]) {
-    const market = await this.binaryPredictionMarketRepository.findOne({
+    const market = await this.predictionMarketRepository.findOne({
       where: { id },
       ...(relations ? { relations } : {}),
     });

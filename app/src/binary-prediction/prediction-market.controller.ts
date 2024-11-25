@@ -7,14 +7,14 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { BinaryPredictionService } from './binary-prediction.service';
+import { PredictionMarketService } from './prediction-market.service';
 import { CreatePredictionMarketDto } from './dto/create-market.dto';
 import { GetMarketsQuery } from './dto/get-markets.dto';
 
 @Controller('binary-prediction')
-export class BinaryPredictionController {
+export class PredictionMarketController {
   constructor(
-    private readonly binaryPredictionService: BinaryPredictionService,
+    private readonly predictionMarketService: PredictionMarketService,
   ) {}
 
   @Post()
@@ -29,7 +29,7 @@ export class BinaryPredictionController {
       subject = null,
     }: CreatePredictionMarketDto,
   ) {
-    return this.binaryPredictionService.createNewMarket(
+    return this.predictionMarketService.createNewMarket(
       question,
       outcomes,
       initialLiquidity,
@@ -41,12 +41,12 @@ export class BinaryPredictionController {
 
   @Get()
   getMarkets(@Query() marketFeatures?: GetMarketsQuery) {
-    return this.binaryPredictionService.findMarkets(marketFeatures);
+    return this.predictionMarketService.findMarkets(marketFeatures);
   }
 
   @Get(':id')
   getSpecificMarket(@Param('id', ParseIntPipe) id: string) {
-    return this.binaryPredictionService.getMarket(+id);
+    return this.predictionMarketService.getMarket(+id);
   }
 
   // TODO: Patch endpoint

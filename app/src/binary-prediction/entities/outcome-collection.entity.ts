@@ -7,7 +7,7 @@ import {
   ManyToOne,
 } from 'typeorm';
 import { BaseEntity } from '../../core/base.entity';
-import { BinaryPredictionMarket } from './market.entity';
+import { PredictionMarket } from './market.entity';
 import { PredictionOutcome } from './outcome.entity';
 
 @Entity('outcome_token')
@@ -16,9 +16,9 @@ export class OutcomeCollection extends BaseEntity {
   @Column({ name: 'market_id', type: 'integer' })
   marketId: number;
 
-  @ManyToOne(() => BinaryPredictionMarket)
+  @ManyToOne(() => PredictionMarket)
   @JoinColumn({ name: 'market_id' })
-  market: BinaryPredictionMarket;
+  market: PredictionMarket;
 
   @Column({ name: 'collection_id' })
   collectionId: string;
