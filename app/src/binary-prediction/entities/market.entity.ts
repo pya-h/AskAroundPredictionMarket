@@ -25,7 +25,7 @@ export class BinaryPredictionMarket extends BaseEntity {
   @Column({ name: 'condition_id', unique: true })
   conditionId: string;
 
-  @Column({ name: 'oracle_id', unique: true })
+  @Column({ name: 'oracle_id' })
   oracleId: number;
 
   @ManyToOne(() => Oracle, { onDelete: 'NO ACTION' })

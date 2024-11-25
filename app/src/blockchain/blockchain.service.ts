@@ -191,7 +191,10 @@ export class BlockchainService {
         0,
         '0x0000000000000000000000000000000000000000',
         initialLiquidity,
-        { from: this.operator.ethers.address },
+        {
+          from: this.operator.ethers.address,
+          nonce: await this.operator.ethers.getNonce(),
+        },
       );
 
     await lmsrFactoryTx.wait();
@@ -246,7 +249,8 @@ export class BlockchainService {
     marketOutcomesCount: number = 2,
   ) {
     return (
-      (await this.getOutcomeSlotsCount(conditionId)) === marketOutcomesCount
+      Number(await this.getOutcomeSlotsCount(conditionId)) ===
+      marketOutcomesCount
     ); // As gnosis docs says, this is the proper way to validate the market creation operation, after calling prepareCondition.
   }
 

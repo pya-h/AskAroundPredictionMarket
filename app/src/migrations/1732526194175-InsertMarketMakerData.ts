@@ -11,7 +11,7 @@ export class InsertMarketMakerData1732526194175 implements MigrationInterface {
         5,
         'LMSR Market Maker Factory Contract',
         'This Market maker will manage the prediction market conditional tokens with an exponential formula, its precise but costly.',
-        [
+        JSON.stringify([
           {
             constant: true,
             inputs: [],
@@ -173,7 +173,7 @@ export class InsertMarketMakerData1732526194175 implements MigrationInterface {
             stateMutability: 'nonpayable',
             type: 'function',
           },
-        ],
+        ]),
       ],
     );
   }

@@ -11,7 +11,7 @@ export class InsertOracleContractData1732527233111
         1337,
         '0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0',
         'A test oracle just for testing purposes and it resolves manually usually specified endpoints or whatever.',
-        [
+        JSON.stringify([
           // FIXME: ABI needs changing, find an oracle in gnosis contracts.
           {
             inputs: [
@@ -40,7 +40,7 @@ export class InsertOracleContractData1732527233111
             stateMutability: 'nonpayable',
             type: 'function',
           },
-        ],
+        ]),
       ],
     );
   }

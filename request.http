@@ -17,9 +17,13 @@ POST  {{host}}/binary-prediction/
 Content-Type: application/json
 
 {
-    "question": "My first approved question",
+    "question": "My first approved question GFs",
     "initialLiquidity": 1,
     "outcomes": [
         "Yes", "No"
-    ]
+    ],
+    "resolveAt": "2024-12-26T20:30:00.000Z"
 }
+
+### Get markets:
+GET  {{host}}/binary-prediction/

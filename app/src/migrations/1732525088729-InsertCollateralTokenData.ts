@@ -6,13 +6,13 @@ export class InsertCollateralTokenData1732525088729
 {
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
-      `INSERT INTO public."cryptocurrency_token" ("name", symbol, chain_id, address, abi) VALUES ($1, $2, $3, $4, $5, $6)`,
+      `INSERT INTO public."cryptocurrency_token" ("name", symbol, chain_id, address, abi) VALUES ($1, $2, $3, $4, $5)`,
       [
         'Wrapped Ethereum 9',
         'WETH9',
         1337,
         '0x59d3631c86BbE35EF041872d502F218A39FBa150',
-        [
+        JSON.stringify([
           {
             constant: true,
             inputs: [],
@@ -290,7 +290,7 @@ export class InsertCollateralTokenData1732525088729
             stateMutability: 'nonpayable',
             type: 'function',
           },
-        ],
+        ]),
       ],
     );
   }

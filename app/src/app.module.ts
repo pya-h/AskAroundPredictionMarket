@@ -6,7 +6,7 @@ import { BlockchainModule } from './blockchain/blockchain.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from './config/config.module';
 import { ConfigService } from './config/config.service';
-import { postgresTypeormConfig } from './config/db.config';
+import { selectedDbConfig } from './config/db.config';
 
 @Module({
   imports: [
@@ -14,10 +14,7 @@ import { postgresTypeormConfig } from './config/db.config';
     BlockchainModule,
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        ... postgresTypeormConfig(configService),
-        type: 'postgres',
-      }),
+      useFactory: selectedDbConfig,
       inject: [ConfigService],
     }),
     ConfigModule,
