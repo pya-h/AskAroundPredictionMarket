@@ -3,7 +3,7 @@ import { BaseEntity } from '../../core/base.entity';
 import { Chain } from './chain.entity';
 import { CryptoTokenEnum } from '../enums/crypto-token.enum';
 
-@Entity()
+@Entity('cryptocurrency_token')
 export class CryptocurrencyToken extends BaseEntity {
   @Column({ type: 'varchar', length: 64 })
   name: string;

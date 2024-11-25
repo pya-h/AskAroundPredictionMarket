@@ -2,7 +2,7 @@ import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../core/base.entity';
 import { Chain } from './chain.entity';
 
-@Entity()
+@Entity('market_maker_factory')
 export class MarketMakerFactory extends BaseEntity {
   @Column({ type: 'varchar', length: 32 })
   name: string;

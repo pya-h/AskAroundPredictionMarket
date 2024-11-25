@@ -7,7 +7,7 @@ import { MarketMakerFactory } from '../../blockchain/entities/market-maker-facto
 import { Chain } from '../../blockchain/entities/chain.entity';
 import { MarketCategory } from './market-category.entity';
 
-@Entity()
+@Entity('binary_prediction_market')
 export class BinaryPredictionMarket extends BaseEntity {
   // notes: market is equivalent to 'condition' in gnosis contracts.
 

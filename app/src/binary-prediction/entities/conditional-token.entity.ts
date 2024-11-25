@@ -3,7 +3,7 @@ import { BaseEntity } from '../../core/base.entity';
 import { BinaryPredictionMarket } from './market.entity';
 import { PredictionOutcome } from './outcome.entity';
 
-@Entity()
+@Entity('conditional_token')
 export class ConditionalToken extends BaseEntity {
   @Column({ name: 'market_id', type: 'integer' })
   marketId: number;

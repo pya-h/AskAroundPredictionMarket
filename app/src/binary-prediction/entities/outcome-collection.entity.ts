@@ -10,7 +10,7 @@ import { BaseEntity } from '../../core/base.entity';
 import { BinaryPredictionMarket } from './market.entity';
 import { PredictionOutcome } from './outcome.entity';
 
-@Entity()
+@Entity('outcome_token')
 export class OutcomeCollection extends BaseEntity {
   //TODO: THINK: We should use this or ConditionalTokens?
   @Column({ name: 'market_id', type: 'integer' })
