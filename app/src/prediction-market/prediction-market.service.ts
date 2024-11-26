@@ -123,6 +123,7 @@ export class PredictionMarketService {
         shouldResolveAt,
         categoryId,
         subject,
+        numberOfOutcomes: outcomes.length,
       }),
     );
     const conditionalTokens: ConditionalToken[] = Array(outcomes.length);
@@ -212,13 +213,27 @@ export class PredictionMarketService {
     marketId,
     amount,
     outcomeIndex,
+    traderId,
     collateralLimit = 0.0,
   }: {
     marketId: number;
+    traderId: number;
     amount: number;
     outcomeIndex: number;
     collateralLimit?: number;
   }) {
+    const market = await this.getMarket(marketId, [
+      'ammFactory',
+      'collateralToken',
+    ]);
+    if (!market) throw new NotFoundException('No such market!');
+    if (market.shouldResolveAt < new Date())
+      throw new BadRequestException('This market is closed!');
+    if (outcomeIndex >= market.numberOfOutcomes)
+      throw new BadRequestException('You have selected an invalid outcome.');
 
+    // TODO: Also check some other important checks
+
+    return this.blockchainService.trade(traderId, market, outcomeIndex, amount);
   }
 }

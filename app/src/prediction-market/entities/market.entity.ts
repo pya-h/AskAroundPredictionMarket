@@ -59,8 +59,11 @@ export class PredictionMarket extends BaseEntity {
   @Column({ name: 'subject', nullable: true, default: null })
   subject: string | null; // This is actually a short name for the market, useful when listing markets to prevent the list being too wide.
 
-  @Column()
+  @Column({ name: 'should_resolve_at' })
   shouldResolveAt: Date;
+
+  @Column({ name: 'finalized_at', nullable: true, default: null })
+  finalizedAt: Date;
 
   @Column({ type: 'decimal' })
   initialLiquidity: bigint;
@@ -87,6 +90,9 @@ export class PredictionMarket extends BaseEntity {
 
   @Column({ name: 'create_market_tx_hash' })
   createMarketTxHash: string;
+
+  @Column({ name: 'num_of_outcomes', type: 'smallint', default: 2 })
+  numberOfOutcomes: number;
 
   @OneToMany(() => ConditionalToken, (outcomeToken) => outcomeToken.market)
   outcomeTokens: ConditionalToken[];
