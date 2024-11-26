@@ -22,8 +22,11 @@ export class PredictionMarket extends BaseEntity {
   // @JoinColumn({ name: 'creator_id' })
   // creator: creator;
 
-  @Column({ name: 'condition_id', unique: true })
+  @Column({ name: 'condition_id' })
   conditionId: string;
+
+  @Column({ name: 'address' })
+  address: string;
 
   @Column({ name: 'oracle_id' })
   oracleId: number;

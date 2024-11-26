@@ -108,9 +108,10 @@ export class PredictionMarketService {
     const market = await this.predictionMarketRepository.save(
       this.predictionMarketRepository.create({
         conditionId: result.conditionId,
+        address: result.marketMakerAddress,
         question: result.question,
         questionHash: result.questionHash,
-        ammFactoryId: result.marketMaker.id,
+        ammFactoryId: result.marketMakerFactory.id,
         oracleId: result.oracle.id,
         chainId: result.chainId,
         collateralTokenId: result.collateralToken.id,

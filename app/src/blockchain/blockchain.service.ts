@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -111,7 +112,7 @@ export class BlockchainService {
   ) {
     const currentChainId = await this.getCurrentChainId();
 
-    const [marketMaker, collateralToken] = await Promise.all([
+    const [factory, collateralToken] = await Promise.all([
       marketMakerFactoryIdentifier instanceof MarketMakerFactory
         ? marketMakerFactoryIdentifier
         : this.marketMakerFactoryRepository.findOneBy({
@@ -123,12 +124,12 @@ export class BlockchainService {
         symbol: collateralTokenSymbol.toString(),
       }),
     ]);
-    if (!marketMaker) {
+    if (!factory) {
       throw new NotFoundException("This kind of AMM doesn't exist!");
     }
-    if (marketMaker.maxSupportedOutcomes < outcomes.length)
+    if (factory.maxSupportedOutcomes < outcomes.length)
       throw new BadRequestException(
-        `This AMM doesn't support more than ${marketMaker.maxSupportedOutcomes} outcomes.`,
+        `This AMM doesn't support more than ${factory.maxSupportedOutcomes} outcomes.`,
       );
 
     if (!collateralToken?.abi?.length)
@@ -137,8 +138,8 @@ export class BlockchainService {
         'Unfortunately this cryptocurrency is not supported to be used as collateral token in this network.',
       );
     const marketMakerFactoryContract = new ethers.Contract(
-        marketMaker.address,
-        marketMaker.factoryABI,
+        factory.address,
+        factory.factoryABI,
         this.operator.ethers,
       ),
       collateralTokenContract = new ethers.Contract(
@@ -177,7 +178,7 @@ export class BlockchainService {
     );
 
     const approveTx = await collateralTokenContract.approve(
-      marketMaker.address,
+      factory.address,
       initialLiquidity,
     );
     await approveTx.wait();
@@ -200,12 +201,31 @@ export class BlockchainService {
     await lmsrFactoryTx.wait();
     console.log('LMSR Market creation finished, trx: ', lmsrFactoryTx);
 
+    const creationLog = lmsrFactoryTx.logs.find(
+      ({ event }) => event === factory.marketMakerCreationEvent,
+    );
+
+    if (!creationLog?.args?.[factory.marketMakerAddressField]) {
+      console.error(
+        'Failed to find out the created market maker contract address data: creationLog:',
+        creationLog,
+        'trx: ',
+        JSON.stringify(lmsrFactoryTx, null, 2),
+      );
+      throw new ConflictException(
+        'Although the market creation seems ok, but server fails to find its contract!',
+      );
+    }
+
+    console.log('Found MarketMaker contract address data. Blockchain processes all finished.');
+
     return {
       conditionId: conditionId as string,
       creatorId: this.operator.wallet.userId,
       question,
       questionHash,
-      marketMaker,
+      marketMakerFactory: factory,
+      marketMakerAddress: creationLog.args[factory.marketMakerAddressField],
       oracle,
       collateralToken,
       liquidity: initialLiquidity,

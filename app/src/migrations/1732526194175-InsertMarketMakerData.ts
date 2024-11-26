@@ -3,7 +3,9 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 export class InsertMarketMakerData1732526194175 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
-      `INSERT INTO public."market_maker_factory" ("name", address, chain_id, max_supported_outcomes, title, description, factory_abi, market_maker_abi) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      `INSERT INTO public."market_maker_factory" 
+      ("name", address, chain_id, max_supported_outcomes, title, description,
+        mm_creation_event, mm_address_field, factory_abi, mm_abi) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         'LmsrMarketMakerFactory',
         '0x9561C133DD8580860B6b7E504bC5Aa500f0f06a7',
@@ -11,6 +13,8 @@ export class InsertMarketMakerData1732526194175 implements MigrationInterface {
         5,
         'LMSR Market Maker Factory Contract',
         'This Market maker will manage the prediction market conditional tokens with an exponential formula, its precise but costly.',
+        'LMSRMarketMakerCreation',
+        'lmsrMarketMaker',
         JSON.stringify([
           {
             constant: true,
