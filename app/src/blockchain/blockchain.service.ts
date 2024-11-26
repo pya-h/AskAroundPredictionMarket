@@ -101,7 +101,7 @@ export class BlockchainService {
   }
 
   async createMarket(
-    marketMakerIdentifier: number | MarketMakerFactory,
+    marketMakerFactoryIdentifier: number | MarketMakerFactory,
     collateralTokenSymbol: CryptoTokenEnum,
     question: string,
     outcomes: PredictionOutcome[],
@@ -112,10 +112,10 @@ export class BlockchainService {
     const currentChainId = await this.getCurrentChainId();
 
     const [marketMaker, collateralToken] = await Promise.all([
-      marketMakerIdentifier instanceof MarketMakerFactory
-        ? marketMakerIdentifier
+      marketMakerFactoryIdentifier instanceof MarketMakerFactory
+        ? marketMakerFactoryIdentifier
         : this.marketMakerFactoryRepository.findOneBy({
-            id: marketMakerIdentifier,
+            id: marketMakerFactoryIdentifier,
             chainId: currentChainId,
           }),
       this.cryptocurrencyTokenRepository.findOneBy({
@@ -138,7 +138,7 @@ export class BlockchainService {
       );
     const marketMakerFactoryContract = new ethers.Contract(
         marketMaker.address,
-        marketMaker.abi,
+        marketMaker.factoryABI,
         this.operator.ethers,
       ),
       collateralTokenContract = new ethers.Contract(

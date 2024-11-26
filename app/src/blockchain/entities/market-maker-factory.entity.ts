@@ -4,6 +4,7 @@ import { Chain } from './chain.entity';
 
 @Entity('market_maker_factory')
 export class MarketMakerFactory extends BaseEntity {
+// This entity holds the data of xMarketMakerFactory contracts, which will create xMarketMaker contracts.
   @Column({ type: 'varchar', length: 32 })
   name: string;
 
@@ -17,8 +18,11 @@ export class MarketMakerFactory extends BaseEntity {
   @JoinColumn({ name: 'chain_id' })
   chain: Chain;
 
-  @Column({ type: 'jsonb' })
-  abi: Record<string, unknown>[];
+  @Column({ type: 'jsonb', name: 'factory_abi' })
+  factoryABI: Record<string, unknown>[];
+
+  @Column({ type: 'jsonb', name: 'market_maker_abi' })
+  marketMakerABI: Record<string, unknown>[];
 
   @Column({ name: 'max_supported_outcomes', type: 'smallint', default: 2 })
   maxSupportedOutcomes: number;
