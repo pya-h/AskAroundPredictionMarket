@@ -11,6 +11,8 @@ import { PredictionMarketService } from './prediction-market.service';
 import { CreatePredictionMarketDto } from './dto/create-market.dto';
 import { GetMarketsQuery } from './dto/get-markets.dto';
 import { TradeCoditionalToken } from './dto/trade-ctf.dto';
+import { CurrentUser } from '../user/decorators/current-user.decorator';
+import { User } from '../user/entities/user.entity';
 
 @Controller('binary-prediction')
 export class PredictionMarketController {
@@ -55,14 +57,14 @@ export class PredictionMarketController {
   // TODO: Delete endpoint (softDelete actually)
 
   @Post('buy-ctf')
-  buyOutcomeToken(@Body() tradeTokenDto: TradeCoditionalToken) {
+  buyOutcomeToken(@CurrentUser() user: User, @Body() tradeTokenDto: TradeCoditionalToken) {
     // TODO: add currentuser decorator and the curren user address
-    return this.predictionMarketService.trade({...tradeTokenDto, traderId: 0});
+    return this.predictionMarketService.trade({...tradeTokenDto, traderId: user.id});
   }
 
   @Post('sell-ctf')
-  sellOutcomeToken(@Body() tradeTokenDto: TradeCoditionalToken) {
+  sellOutcomeToken(@CurrentUser() user: User, @Body() tradeTokenDto: TradeCoditionalToken) {
     tradeTokenDto.amount *= -1;
-    return this.predictionMarketService.trade({...tradeTokenDto, traderId: 0});
+    return this.predictionMarketService.trade({...tradeTokenDto, traderId: user.id});
   }
 }

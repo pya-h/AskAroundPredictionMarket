@@ -1,9 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { UserService } from './user.service';
-import { EntityExistsException } from 'src/exceptions/entity-exists.exception';
 import { randomBytes, scrypt } from 'crypto';
 import { promisify } from 'util';
-import { EntityNotFoundException } from 'src/exceptions/entity-not-found.exception';
 import { User } from './entities/user.entity';
 
 const ascrypt = promisify(scrypt);
@@ -12,12 +14,11 @@ const ascrypt = promisify(scrypt);
 export class AuthService {
   constructor(private userService: UserService) {}
 
-  async register(username: string, email: string, password: string) {
+  async register(username: string, email: string, password: string, walletAddress: string) {
     let [existingUser] = await this.userService.find({ username });
-    if (existingUser)
-      throw new EntityExistsException('User', 'username', username);
+    if (existingUser) throw new ConflictException('User already exists.');
     [existingUser] = await this.userService.find({ email });
-    if (existingUser) throw new EntityExistsException('User', 'email', email);
+    if (existingUser) throw new ConflictException('User already exists.');
     const salt = randomBytes(8).toString('hex');
     const hashedPassword = await ascrypt(password, salt, 32);
 
@@ -25,6 +26,7 @@ export class AuthService {
       username,
       email,
       `${salt}.${hashedPassword}`,
+      walletAddress
     );
     return user;
   }
@@ -34,15 +36,15 @@ export class AuthService {
     const enteredPasswordHashed = await ascrypt(password, salt, 32);
     return hashedPassword == enteredPasswordHashed;
   }
+
   async login(identifier: string, password: string) {
     const [user] = await this.userService.find(
       identifier.includes('@')
         ? { email: identifier }
         : { username: identifier },
     );
-    if (!user) throw new EntityNotFoundException('User');
-    if(!(await this.checkPassword(user, password)))
-      return null;
+    if (!user) throw new NotFoundException('User not found!');
+    if (!(await this.checkPassword(user, password))) return null;
     return user;
   }
 }

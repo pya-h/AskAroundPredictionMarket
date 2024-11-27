@@ -2,23 +2,32 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
+import { BlockchainService } from '../blockchain/blockchain.service';
 
 @Injectable()
 export class UserService {
   constructor(
-    @InjectRepository(User) 
+    @InjectRepository(User)
     private userRepository: Repository<User>,
+    private readonly blockchainService: BlockchainService,
   ) {}
 
   // Notice: Password must be hashed. This is just temp.
-  create(username: string, email: string, password: string) {
-    const user: User = this.userRepository.create({
-      username,
-      password,
-      email,
-    }); // using create then save will let u do soem other stuff(like data validation) before saving.
-    // But if its not needed directly using save is sufficient.
-    return this.userRepository.save(user);
+  async create(
+    username: string,
+    email: string,
+    password: string,
+    walletAddress?: string,
+  ) {
+    const user: User = await this.userRepository.save(
+      this.userRepository.create({
+        username,
+        password,
+        email,
+      }),
+    );
+    await this.blockchainService.createBlockchainWallet(user.id, walletAddress);
+    return user;
   }
 
   createDirectly(username: string, email: string, password: string) {
