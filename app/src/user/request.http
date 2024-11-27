@@ -1,0 +1,79 @@
+### Create/Register user:
+POST http://localhost:4000/user/register
+Content-Type: application/json
+
+{
+    "email": "test@gmail.com",
+    "username": "me",
+    "password": "iamhereX_1"
+}
+
+### Get a specific user by id
+GET http://localhost:4000/user/2
+
+### Login user:
+GET http://localhost:4000/user/login?username=me&&password=iamhereX_1
+
+
+### Tell me who am i?
+GET http://localhost:4000/user/whoami
+
+### Log out
+POST http://localhost:4000/user/logout
+
+### lLogin By Post
+POST http://localhost:4000/user/login
+Content-Type: application/json
+
+{
+    "email": "test@gmail.com",
+    "password": "iamhereX_1"
+}
+
+### Get users with specific username
+GET http://localhost:4000/user?username=what
+
+### Get users with specific email
+GET http://localhost:4000/user?email=whatever@gmail.com
+
+
+### Update a user
+PATCH http://localhost:4000/user/2
+Content-Type: application/json
+
+{
+    "password": "This_x_WHatevr3"
+}
+
+### Update a user, multiple changes:
+PATCH http://localhost:4000/user/1
+Content-Type: application/json
+
+{
+    "email": "another@gmail.com",
+    "username": "whatever"
+}
+
+### Delete a user
+DELETE http://localhost:4000/user/2
+
+
+### Add usere badge
+POST http://localhost:4000/user/badge
+Content-Type: application/json
+
+{
+    "name": "test badge for forth user"
+}
+
+### Get all badges
+GET http://localhost:4000/user/badge
+
+
+### Delete Account
+DELETE http://localhost:4000/user/3/delete-account
+Content-Type: application/json
+
+{
+    "password": "iamhereX_1"
+}

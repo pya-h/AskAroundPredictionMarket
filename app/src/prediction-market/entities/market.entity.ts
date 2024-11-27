@@ -6,6 +6,7 @@ import { Oracle } from './oracle.entity';
 import { MarketMakerFactory } from '../../blockchain/entities/market-maker-factory.entity';
 import { Chain } from '../../blockchain/entities/chain.entity';
 import { MarketCategory } from './market-category.entity';
+import { User } from '../../user/entities/user.entity';
 
 @Entity('prediction_market')
 export class PredictionMarket extends BaseEntity {
@@ -18,9 +19,9 @@ export class PredictionMarket extends BaseEntity {
   })
   creatorId: number;
 
-  // @ManyToOne(() => creator)
-  // @JoinColumn({ name: 'creator_id' })
-  // creator: creator;
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'creator_id' })
+  creator: User;
 
   @Column({ name: 'condition_id' })
   conditionId: string;

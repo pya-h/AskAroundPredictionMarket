@@ -1,6 +1,7 @@
 import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../core/base.entity';
 import { Chain } from '../../blockchain/entities/chain.entity';
+import { User } from '../../user/entities/user.entity';
 
 @Entity()
 export class Oracle extends BaseEntity {
@@ -25,4 +26,17 @@ export class Oracle extends BaseEntity {
 
   @Column({ nullable: true })
   description?: string;
+
+  @Column({
+    name: 'manager_id',
+    type: 'integer',
+    nullable: true,
+    default: null
+  })
+  managerId: number | null;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'manager_id' })
+  manager: User | null;
+
 }

@@ -213,8 +213,7 @@ export class PredictionMarketService {
     marketId,
     amount,
     outcomeIndex,
-    traderId,
-    collateralLimit = 0.0,
+    traderId
   }: {
     marketId: number;
     traderId: number;
@@ -233,7 +232,6 @@ export class PredictionMarketService {
       throw new BadRequestException('You have selected an invalid outcome.');
 
     // TODO: Also check some other important checks
-
     return this.blockchainService.trade(traderId, market, outcomeIndex, amount);
   }
 }
