@@ -353,19 +353,24 @@ export class BlockchainService {
     amount: number,
   ) {
     const traderWallet = await this.getBlockchainWallet(traderId);
+    const tradersEthersWallet = new ethers.Wallet(
+      traderWallet.secret,
+      this.provider,
+    );
     const marketMakerContract = new ethers.Contract(
       market.address,
       market.ammFactory.marketMakerABI,
+      tradersEthersWallet,
     );
     const collateralTokenContract = new ethers.Contract(
       market.collateralToken.address,
       market.collateralToken.abi,
       this.operator.ethers,
     );
-    const formattedAmount = new BigNumber(Math.abs(amount)).multipliedBy(
-      new BigNumber(Math.pow(10, await collateralTokenContract.decimals())),
+    const formattedAmount = BigInt(
+      Math.abs(amount) *
+        Math.pow(10, Number(await collateralTokenContract.decimals())),
     );
-
     return amount > 0
       ? this.buyOutcomeToken(
           traderWallet.publicKey,
@@ -387,7 +392,7 @@ export class BlockchainService {
   async buyOutcomeToken(
     buyerAddress: string,
     market: PredictionMarket,
-    formattedAmount: BigNumber,
+    formattedAmount: BigInt,
     selectedOutcomeIndex: number,
     marketMakerContract: ethers.Contract,
     collateralTokenContract: ethers.Contract,
@@ -395,25 +400,44 @@ export class BlockchainService {
     const outcomeTokenAmounts = Array.from(
       { length: market.numberOfOutcomes },
       (_: unknown, index: number) =>
-        index === selectedOutcomeIndex ? formattedAmount : new BigNumber(0),
+        index === selectedOutcomeIndex ? formattedAmount : 0n,
     );
-    const cost = await marketMakerContract.calcNetCost(outcomeTokenAmounts); // FIXME: this mthod is only for lmsr, fpmm contract has separate methods for buy and sell
 
-    const collateralBalance =
-      await collateralTokenContract.balanceOf(buyerAddress);
-    if (cost.gt(collateralBalance)) {
+    const cost = await marketMakerContract.calcNetCost(outcomeTokenAmounts); // FIXME: this mthod is only for lmsr, fpmm contract has separate methods for buy and sell
+    console.log(cost);
+    const collateralBalance = BigInt(
+      await collateralTokenContract.balanceOf(buyerAddress),
+    );
+    console.log(collateralBalance);
+    if (cost > collateralBalance) {
       throw new ForbiddenException(
         `You do not have enough ${market.collateralToken.name} to buy such amount!`,
       );
+      // const collateralDepositTx = await collateralTokenContract.deposit({
+      //   value: formattedAmount,
+      //   nonce: await this.operator.ethers.getNonce(),
+      // });
+      // await collateralDepositTx.wait();
+      // console.log(
+      //   'Collateral token deposit completed, trx:',
+      //   collateralDepositTx,
+      // );
+
+      // const approveTx = await collateralTokenContract.approve(
+      //   market.address,
+      //   formattedAmount,
+      //   {from: buyerAddress}
+      // );
+      // await approveTx.wait();
     }
     // checkout wether such amount of token exists to be bought or not/ of not provide by operator.
-    return marketMakerContract.trade(outcomeTokenAmounts, cost, buyerAddress);
+    return marketMakerContract.trade(outcomeTokenAmounts, cost);
   }
 
   async sellOutcomeToken(
     sellerAddress: string,
     market: PredictionMarket,
-    formattedAmount: BigNumber,
+    formattedAmount: BigInt,
     selectedOutcomeIndex: number,
     marketMakerContract: ethers.Contract,
   ) {
@@ -426,26 +450,24 @@ export class BlockchainService {
       await this.conditionalTokensContract.setApprovalForAll(
         market.address,
         true,
-        sellerAddress,
+        // sellerAddress, // FIXME: This is not in contract signature and it doesnt make sense, so why its in gnosis example project source code?
       );
     }
 
     const outcomeTokenAmounts = Array.from(
       { length: market.numberOfOutcomes },
       (_: unknown, index: number) =>
-        index === selectedOutcomeIndex
-          ? formattedAmount.negated()
-          : new BigNumber(0),
+        index === selectedOutcomeIndex ? -formattedAmount : 0n,
     );
-    const profit = (
-      await marketMakerContract.calcNetCost(outcomeTokenAmounts)
-    ).neg();
+    const profit =
+      -(await marketMakerContract.calcNetCost(outcomeTokenAmounts));
 
+    // FIXME: this mthod is only for lmsr, fpmm contract has separate methods for buy and sell
     return marketMakerContract.trade(
       outcomeTokenAmounts,
       profit,
       sellerAddress,
-    ); // FIXME: this mthod is only for lmsr, fpmm contract has separate methods for buy and sell
+    );
   }
 
   async getBlocksTransactions(blockNumber: number) {

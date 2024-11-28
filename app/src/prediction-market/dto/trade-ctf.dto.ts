@@ -36,14 +36,4 @@ export class TradeCoditionalToken {
   @IsNumber()
   @IsPositive({ message: 'The amount of token must be positive.' })
   amount: number;
-
-  @ApiProperty({
-    description:
-      'The limit of the outcome token value as collateral token, user prefers not to exceed while trading..',
-    default: 0.0,
-    required: false, // TODO: check this out
-  })
-  @IsOptional()
-  @IsNumber()
-  collateralLimit?: number;
 }

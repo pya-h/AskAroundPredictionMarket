@@ -58,7 +58,6 @@ export class PredictionMarketController {
 
   @Post('buy-ctf')
   buyOutcomeToken(@CurrentUser() user: User, @Body() tradeTokenDto: TradeCoditionalToken) {
-    // TODO: add currentuser decorator and the curren user address
     return this.predictionMarketService.trade({...tradeTokenDto, traderId: user.id});
   }
 

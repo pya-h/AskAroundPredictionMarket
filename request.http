@@ -27,3 +27,23 @@ Content-Type: application/json
 
 ### Get markets:
 GET  {{host}}/prediction-market/
+
+### Sell tokens
+POST  {{host}}/prediction-market/sell-ctf
+Content-Type: application/json
+
+{
+    "marketId": 1,
+    "outcomeIndex": 0,
+    "amount": 0.1
+}
+
+### Buy tokens
+POST  {{host}}/prediction-market/buy-ctf
+Content-Type: application/json
+
+{
+    "marketId": 1,
+    "outcomeIndex": 0,
+    "amount": 1
+}

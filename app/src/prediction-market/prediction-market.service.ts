@@ -219,7 +219,6 @@ export class PredictionMarketService {
     traderId: number;
     amount: number;
     outcomeIndex: number;
-    collateralLimit?: number;
   }) {
     const market = await this.getMarket(marketId, [
       'ammFactory',
