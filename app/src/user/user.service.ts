@@ -31,7 +31,7 @@ export class UserService {
   }
 
   createDirectly(username: string, email: string, password: string) {
-    return this.userRepository.save({ username, password, email }); // This works too
+    return this.userRepository.save({ username, password, email });
   }
 
   findOne(id: number) {
@@ -41,8 +41,6 @@ export class UserService {
 
   find(searchParam: Partial<User>): Promise<User[]> {
     const { username, email } = searchParam;
-    // Notice: Actually, this search must be returned as One, but as Uniqueness of email/username has not been implemented,
-    // for now its implemented this way ...
     if (username) return this.userRepository.findBy({ username });
     if (email) return this.userRepository.findBy({ email });
 
@@ -50,7 +48,6 @@ export class UserService {
   }
 
   async updateById(id: number, fields: Partial<User>) {
-    // Notice: Reason for not using repo.update directly, is that that way Hooks dont execute. And there may other works that should be done in between.
     const user = await this.findOne(id);
     if (!user) {
       throw new NotFoundException('User not found.');

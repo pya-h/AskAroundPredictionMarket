@@ -5,7 +5,7 @@ export class InsertMarketMakerData1732526194175 implements MigrationInterface {
     await queryRunner.query(
       `INSERT INTO public."market_maker_factory" 
       ("name", address, chain_id, max_supported_outcomes, title, description,
-        mm_creation_event, mm_address_field, factory_abi, mm_abi) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        mm_creation_event, mm_address_field, factory_abi, mm_abi) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         'LmsrMarketMakerFactory',
         '0x9561C133DD8580860B6b7E504bC5Aa500f0f06a7',

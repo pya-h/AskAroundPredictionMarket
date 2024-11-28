@@ -14,7 +14,7 @@ import { TradeCoditionalToken } from './dto/trade-ctf.dto';
 import { CurrentUser } from '../user/decorators/current-user.decorator';
 import { User } from '../user/entities/user.entity';
 
-@Controller('binary-prediction')
+@Controller('prediction-market')
 export class PredictionMarketController {
   constructor(
     private readonly predictionMarketService: PredictionMarketService,

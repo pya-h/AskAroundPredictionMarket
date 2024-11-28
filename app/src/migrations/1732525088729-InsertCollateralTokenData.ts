@@ -1,4 +1,4 @@
-import { CryptoTokenEnum } from 'src/blockchain/enums/crypto-token.enum';
+import { CryptoTokenEnum } from '../blockchain/enums/crypto-token.enum';
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class InsertCollateralTokenData1732525088729
@@ -9,7 +9,7 @@ export class InsertCollateralTokenData1732525088729
       `INSERT INTO public."cryptocurrency_token" ("name", symbol, chain_id, address, abi) VALUES ($1, $2, $3, $4, $5)`,
       [
         'Wrapped Ethereum 9',
-        'WETH9',
+        CryptoTokenEnum.WETH9.toString(),
         1337,
         '0x59d3631c86BbE35EF041872d502F218A39FBa150',
         JSON.stringify([

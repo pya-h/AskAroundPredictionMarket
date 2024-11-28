@@ -1,20 +1,10 @@
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  AfterInsert,
-  AfterUpdate,
-  DeleteDateColumn,
-  AfterRemove,
-} from 'typeorm';
+import { Entity, Column } from 'typeorm';
 import { Exclude } from 'class-transformer';
+import { BaseEntity } from '../../core/base.entity';
 
 @Entity()
-export class User {
-  @PrimaryGeneratedColumn()
-  id: number;
-
-  @Column()
+export class User extends BaseEntity {
+  @Column({ unique: true })
   username: string;
 
   @Column()
@@ -23,27 +13,4 @@ export class User {
   @Exclude()
   @Column()
   password: string;
-
-  @AfterInsert()
-  logAfterInsert() {
-    console.log('This User object has been INSERTED: ', this);
-  }
-
-  @AfterUpdate()
-  logAfterUpdate() {
-    console.log('This User object has been UPDATED: ', this);
-  }
-
-  @AfterRemove()
-  logAfterRemove() {
-    console.log('This User object has been REMOVED: ', this);
-  }
-
-  @DeleteDateColumn({
-    name: 'deleted_at',
-    type: 'datetime',
-    default: null,
-  })
-  deletedAt: Date;
-  
 }

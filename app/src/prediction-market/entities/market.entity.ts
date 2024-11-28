@@ -29,10 +29,10 @@ export class PredictionMarket extends BaseEntity {
   @Column({ name: 'address' })
   address: string;
 
-  @Column({ name: 'oracle_id' })
+  @Column({ name: 'oracle_id', nullable: true })
   oracleId: number;
 
-  @ManyToOne(() => Oracle, { onDelete: 'NO ACTION' })
+  @ManyToOne(() => Oracle, { onDelete: 'SET NULL' })
   @JoinColumn({ name: 'oracle_id' })
   oracle: Oracle;
 
