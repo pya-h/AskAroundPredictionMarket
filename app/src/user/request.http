@@ -1,28 +1,31 @@
+@host = http://localhost:3000
+
 ### Create/Register user:
-POST http://localhost:4000/user/register
+POST {{host}}/user/register
 Content-Type: application/json
 
 {
     "email": "test@gmail.com",
     "username": "me",
-    "password": "iamhereX_1"
+    "password": "iamhereX_1",
+    "walletAddress": "0x22d491Bde2303f2f43325b2108D26f1eAbA1e32b"
 }
 
 ### Get a specific user by id
-GET http://localhost:4000/user/2
+GET {{host}}/user/2
 
 ### Login user:
-GET http://localhost:4000/user/login?username=me&&password=iamhereX_1
+GET {{host}}/user/login?username=me&&password=iamhereX_1
 
 
 ### Tell me who am i?
-GET http://localhost:4000/user/whoami
+GET {{host}}/user/whoami
 
 ### Log out
-POST http://localhost:4000/user/logout
+POST {{host}}/user/logout
 
 ### lLogin By Post
-POST http://localhost:4000/user/login
+POST {{host}}/user/login
 Content-Type: application/json
 
 {
@@ -31,14 +34,14 @@ Content-Type: application/json
 }
 
 ### Get users with specific username
-GET http://localhost:4000/user?username=what
+GET {{host}}/user?username=what
 
 ### Get users with specific email
-GET http://localhost:4000/user?email=whatever@gmail.com
+GET {{host}}/user?email=whatever@gmail.com
 
 
 ### Update a user
-PATCH http://localhost:4000/user/2
+PATCH {{host}}/user/2
 Content-Type: application/json
 
 {
@@ -46,7 +49,7 @@ Content-Type: application/json
 }
 
 ### Update a user, multiple changes:
-PATCH http://localhost:4000/user/1
+PATCH {{host}}/user/1
 Content-Type: application/json
 
 {
@@ -55,11 +58,11 @@ Content-Type: application/json
 }
 
 ### Delete a user
-DELETE http://localhost:4000/user/2
+DELETE {{host}}/user/2
 
 
 ### Add usere badge
-POST http://localhost:4000/user/badge
+POST {{host}}/user/badge
 Content-Type: application/json
 
 {
@@ -67,11 +70,11 @@ Content-Type: application/json
 }
 
 ### Get all badges
-GET http://localhost:4000/user/badge
+GET {{host}}/user/badge
 
 
 ### Delete Account
-DELETE http://localhost:4000/user/3/delete-account
+DELETE {{host}}/user/3/delete-account
 Content-Type: application/json
 
 {

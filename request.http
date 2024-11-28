@@ -17,7 +17,7 @@ POST  {{host}}/prediction-market/
 Content-Type: application/json
 
 {
-    "question": "My first approved question?",
+    "question": "Question 3?",
     "initialLiquidity": 1,
     "outcomes": [
         "Yes", "No"

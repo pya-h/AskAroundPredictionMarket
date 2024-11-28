@@ -7,7 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PredictionOutcome } from '../prediction-market/entities/outcome.entity';
-import { ethers } from 'ethers';
+import { ContractTransactionReceipt, ethers } from 'ethers';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Chain } from './entities/chain.entity';
 import { Repository } from 'typeorm';
@@ -187,28 +187,25 @@ export class BlockchainService {
     await approveTx.wait();
     console.warn('Liquidity deposit completed and approved.');
 
-    const lmsrFactoryTx =
-      await marketMakerFactoryContract.createLMSRMarketMaker(
-        ConditionTokenContractData.address,
-        collateralToken.address,
-        [conditionId], // TODO: Maybe write another method to create multiple markets at the same time?
-        0,
-        '0x0000000000000000000000000000000000000000',
-        initialLiquidity,
-        {
-          from: this.operator.ethers.address,
-          nonce: await this.operator.ethers.getNonce(),
-        },
-      );
-
-    await lmsrFactoryTx.wait();
-    console.log('LMSR Market creation finished, trx: ', lmsrFactoryTx);
-
-    const creationLog = lmsrFactoryTx.logs.find(
-      ({ event }) => event === factory.marketMakerCreationEvent,
+    let lmsrFactoryTx = await marketMakerFactoryContract.createLMSRMarketMaker(
+      ConditionTokenContractData.address,
+      collateralToken.address,
+      [conditionId], // TODO: Maybe write another method to create multiple markets at the same time?
+      0,
+      '0x0000000000000000000000000000000000000000',
+      initialLiquidity,
+      {
+        from: this.operator.ethers.address,
+        nonce: await this.operator.ethers.getNonce(),
+      },
     );
 
-    if (!creationLog?.args?.[factory.marketMakerAddressField]) {
+    lmsrFactoryTx = await lmsrFactoryTx.wait();
+    console.log('LMSR Market creation finished, trx: ', lmsrFactoryTx);
+
+    const creationLog = await this.findEventByName(lmsrFactoryTx, marketMakerFactoryContract, factory.marketMakerCreationEvent);
+
+    if (!creationLog[0]?.args?.[factory.marketMakerAddressField]) {
       console.error(
         'Failed to find out the created market maker contract address data: creationLog:',
         creationLog,
@@ -230,7 +227,7 @@ export class BlockchainService {
       question,
       questionHash,
       marketMakerFactory: factory,
-      marketMakerAddress: creationLog.args[factory.marketMakerAddressField],
+      marketMakerAddress: creationLog[0].args[factory.marketMakerAddressField],
       oracle,
       collateralToken,
       liquidity: initialLiquidity,
@@ -239,6 +236,33 @@ export class BlockchainService {
       chainId: currentChainId,
     }; // the input params are also returned, so in case any required changes happened [such as changing oracle or AMM due to some reason,
     //  or increasing/decreasing initial liquidity or whatever], market entity data would be correct.
+  }
+
+  async findEventByName(
+    transactionReceipt: ethers.ContractTransactionReceipt,
+    contract: ethers.Contract,
+    eventName: string,
+  ): Promise<ethers.LogDescription[]> {
+    try {
+      // Get the event fragment from the contract's interface
+      const eventFragment = contract.interface.getEvent(eventName);
+
+      // Generate the topics for the event
+      const eventTopics = contract.interface.encodeFilterTopics(
+        eventFragment,
+        [],
+      );
+
+      const logs = transactionReceipt.logs.filter(
+        (log) => log.topics[0] === eventTopics[0], // Compare the event signature topic
+      );
+
+      // Decode and return the matching logs
+      return logs.map((log) => contract.interface.parseLog(log));
+    } catch (error) {
+      console.error('Error finding event by name:', error);
+      throw error;
+    }
   }
 
   getCollectionId(
