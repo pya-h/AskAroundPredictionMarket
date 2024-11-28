@@ -7,7 +7,6 @@ export class AuthGuard implements CanActivate {
         const { userID } = request.session;
         let isAuthorised = Boolean(userID);
         if(['PATCH', 'PUT', 'DELETE'].includes((request.method as string).toUpperCase())) {
-            console.log('checking patch/delete/put')
             const { id } = request.params;
             isAuthorised &&= userID === +id;
         }

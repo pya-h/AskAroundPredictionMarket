@@ -203,7 +203,11 @@ export class BlockchainService {
     lmsrFactoryTx = await lmsrFactoryTx.wait();
     console.log('LMSR Market creation finished, trx: ', lmsrFactoryTx);
 
-    const creationLog = await this.findEventByName(lmsrFactoryTx, marketMakerFactoryContract, factory.marketMakerCreationEvent);
+    const creationLog = await this.findEventByName(
+      lmsrFactoryTx,
+      marketMakerFactoryContract,
+      factory.marketMakerCreationEvent,
+    );
 
     if (!creationLog[0]?.args?.[factory.marketMakerAddressField]) {
       console.error(
@@ -313,9 +317,13 @@ export class BlockchainService {
     ); // As gnosis docs says, this is the proper way to validate the market creation operation, after calling prepareCondition.
   }
 
+  alreadyOwnsWallet(userId: number) {
+    return this.blockchainWalletRepository.findOneBy({ userId });
+  }
+
   async createBlockchainWallet(ownerId: number, publicKey?: string) {
     // TODO: do some checks
-    if (!(await this.blockchainWalletRepository.findOneBy({ userId: ownerId })))
+    if (await this.alreadyOwnsWallet(ownerId))
       throw new ConflictException('This user already has a blockchain wallet.');
     if (!publicKey) {
       // FIXME:  Create or assign a blockchain wallet to this user and set the public/private key values then

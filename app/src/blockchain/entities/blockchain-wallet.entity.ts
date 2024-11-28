@@ -10,7 +10,7 @@ export class BlockchainWallet extends BaseEntity {
   @Column({ name: 'public_key', type: 'varchar', length: 128 })
   publicKey: string;
 
-  @Column()
+  @Column({ nullable: true }) // TODO: Later decide if this nullable must be removed or not
   secret: string; // TODO: private key (does it need encryption?)
 
   @Column({ name: 'user_id', type: 'integer', unique: true, nullable: false })

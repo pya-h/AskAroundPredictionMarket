@@ -74,7 +74,6 @@ export class UserController {
     if (session.userID) throw new ConflictException('You are logged in.');
     let user: User;
     const { username, email, password } = body;
-    console.log(username, email, password);
     user = await this.authService.login(
       username?.length ? username : email,
       password,

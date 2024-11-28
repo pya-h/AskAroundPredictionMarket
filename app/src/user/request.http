@@ -5,9 +5,9 @@ POST {{host}}/user/register
 Content-Type: application/json
 
 {
-    "email": "test@gmail.com",
-    "username": "me",
-    "password": "iamhereX_1",
+    "email": "payaY@gmail.com",
+    "username": "payaY",
+    "password": "Iam_P4ya",
     "walletAddress": "0x22d491Bde2303f2f43325b2108D26f1eAbA1e32b"
 }
 
