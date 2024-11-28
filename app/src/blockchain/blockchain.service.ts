@@ -1,4 +1,3 @@
-import { BigNumber } from 'bignumber.js';
 import {
   BadRequestException,
   ConflictException,
@@ -7,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PredictionOutcome } from '../prediction-market/entities/outcome.entity';
-import { ContractTransactionReceipt, ethers } from 'ethers';
+import { ethers } from 'ethers';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Chain } from './entities/chain.entity';
 import { Repository } from 'typeorm';
