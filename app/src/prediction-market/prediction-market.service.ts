@@ -213,7 +213,7 @@ export class PredictionMarketService {
     marketId,
     amount,
     outcomeIndex,
-    traderId
+    traderId,
   }: {
     marketId: number;
     traderId: number;

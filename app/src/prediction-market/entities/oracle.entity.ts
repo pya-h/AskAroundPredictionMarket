@@ -31,12 +31,11 @@ export class Oracle extends BaseEntity {
     name: 'manager_id',
     type: 'integer',
     nullable: true,
-    default: null
+    default: null,
   })
   managerId: number | null;
 
   @ManyToOne(() => User)
   @JoinColumn({ name: 'manager_id' })
   manager: User | null;
-
 }

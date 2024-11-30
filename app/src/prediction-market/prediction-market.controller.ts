@@ -57,13 +57,25 @@ export class PredictionMarketController {
   // TODO: Delete endpoint (softDelete actually)
 
   @Post('buy-ctf')
-  buyOutcomeToken(@CurrentUser() user: User, @Body() tradeTokenDto: TradeCoditionalToken) {
-    return this.predictionMarketService.trade({...tradeTokenDto, traderId: user.id});
+  buyOutcomeToken(
+    @CurrentUser() user: User,
+    @Body() tradeTokenDto: TradeCoditionalToken,
+  ) {
+    return this.predictionMarketService.trade({
+      ...tradeTokenDto,
+      traderId: user.id,
+    });
   }
 
   @Post('sell-ctf')
-  sellOutcomeToken(@CurrentUser() user: User, @Body() tradeTokenDto: TradeCoditionalToken) {
+  sellOutcomeToken(
+    @CurrentUser() user: User,
+    @Body() tradeTokenDto: TradeCoditionalToken,
+  ) {
     tradeTokenDto.amount *= -1;
-    return this.predictionMarketService.trade({...tradeTokenDto, traderId: user.id});
+    return this.predictionMarketService.trade({
+      ...tradeTokenDto,
+      traderId: user.id,
+    });
   }
 }

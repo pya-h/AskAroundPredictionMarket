@@ -16,7 +16,9 @@ export class InsertDefaultAdminUserData1715526391805
       [
         0,
         'admin',
-        (await configService.hashSalt(configService.get('ADMIN_PASSWORD'))).toString(),
+        (
+          await configService.hashSalt(configService.get('ADMIN_PASSWORD'))
+        ).toString(),
         'admin@omenium.com',
       ],
     );

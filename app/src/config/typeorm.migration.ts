@@ -1,4 +1,3 @@
-import { join } from 'path';
 import { ConfigService } from './config.service';
 import { config } from 'dotenv';
 import { DataSource, DataSourceOptions } from 'typeorm';

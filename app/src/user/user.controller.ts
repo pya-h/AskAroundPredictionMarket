@@ -41,7 +41,12 @@ export class UserController {
     if (session.userID) throw new ConflictException('You are logged in.');
     const { username, password, email, walletAddress } = body;
 
-    const user = await this.authService.register(username, email, password, walletAddress);
+    const user = await this.authService.register(
+      username,
+      email,
+      password,
+      walletAddress,
+    );
     session.userID = user.id;
     return user;
   }
@@ -54,8 +59,7 @@ export class UserController {
     @Session() session: any,
   ) {
     if (session?.userID) throw new ConflictException('You are logged in.');
-    let user: User;
-    user = await this.authService.login(
+    const user: User = await this.authService.login(
       username?.length ? username : email,
       password,
     );
@@ -72,9 +76,8 @@ export class UserController {
   @Post('/login')
   async loginByPost(@Body() body: LoginUserDto, @Session() session: any) {
     if (session.userID) throw new ConflictException('You are logged in.');
-    let user: User;
     const { username, email, password } = body;
-    user = await this.authService.login(
+    const user = await this.authService.login(
       username?.length ? username : email,
       password,
     );

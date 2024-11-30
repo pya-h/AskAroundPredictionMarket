@@ -391,7 +391,7 @@ export class BlockchainService {
   async buyOutcomeToken(
     buyerAddress: string,
     market: PredictionMarket,
-    formattedAmount: BigInt,
+    formattedAmount: bigint,
     selectedOutcomeIndex: number,
     marketMakerContract: ethers.Contract,
     collateralTokenContract: ethers.Contract,
@@ -436,7 +436,7 @@ export class BlockchainService {
   async sellOutcomeToken(
     sellerAddress: string,
     market: PredictionMarket,
-    formattedAmount: BigInt,
+    formattedAmount: bigint,
     selectedOutcomeIndex: number,
     marketMakerContract: ethers.Contract,
   ) {

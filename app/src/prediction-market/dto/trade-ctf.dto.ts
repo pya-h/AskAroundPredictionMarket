@@ -1,16 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import {
-  ArrayMinSize,
-  IsArray,
-  IsDate,
-  IsInt,
-  IsNotEmpty,
-  IsNumber,
-  IsOptional,
-  IsPositive,
-  IsString,
-} from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsInt, IsNotEmpty, IsNumber, IsPositive } from 'class-validator';
 
 export class TradeCoditionalToken {
   @ApiProperty({
