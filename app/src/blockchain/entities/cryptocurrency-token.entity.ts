@@ -18,7 +18,7 @@ export class CryptocurrencyToken extends BaseEntity {
   @Column({ name: 'chain_id' })
   chainId: number;
 
-  @ManyToOne(() => Chain)
+  @ManyToOne(() => Chain, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'chain_id' })
   chain: Chain;
 

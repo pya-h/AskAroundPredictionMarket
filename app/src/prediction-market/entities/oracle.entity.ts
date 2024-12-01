@@ -11,7 +11,7 @@ export class Oracle extends BaseEntity {
   @Column({ name: 'chain_id' })
   chainId: number;
 
-  @ManyToOne(() => Chain)
+  @ManyToOne(() => Chain, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'chain_id' })
   chain: Chain;
 
@@ -35,7 +35,7 @@ export class Oracle extends BaseEntity {
   })
   managerId: number | null;
 
-  @ManyToOne(() => User)
+  @ManyToOne(() => User, { onDelete: 'SET NULL' })
   @JoinColumn({ name: 'manager_id' })
   manager: User | null;
 }

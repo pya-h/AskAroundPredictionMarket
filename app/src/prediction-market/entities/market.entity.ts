@@ -10,8 +10,6 @@ import { User } from '../../user/entities/user.entity';
 
 @Entity('prediction_market')
 export class PredictionMarket extends BaseEntity {
-  // notes: market is equivalent to 'condition' in gnosis contracts.
-
   @Column({
     name: 'creator_id',
     type: 'integer',
@@ -19,7 +17,7 @@ export class PredictionMarket extends BaseEntity {
   })
   creatorId: number;
 
-  @ManyToOne(() => User)
+  @ManyToOne(() => User, { onDelete: 'NO ACTION' })
   @JoinColumn({ name: 'creator_id' })
   creator: User;
 
@@ -32,14 +30,14 @@ export class PredictionMarket extends BaseEntity {
   @Column({ name: 'oracle_id', nullable: true })
   oracleId: number;
 
-  @ManyToOne(() => Oracle, { onDelete: 'SET NULL' })
+  @ManyToOne(() => Oracle, { onDelete: 'NO ACTION' })
   @JoinColumn({ name: 'oracle_id' })
   oracle: Oracle;
 
   @Column({ name: 'chain_id' })
   chainId: number;
 
-  @ManyToOne(() => Chain)
+  @ManyToOne(() => Chain, { onDelete: 'NO ACTION' })
   @JoinColumn({ name: 'chain_id' })
   chain: Chain;
 
@@ -75,14 +73,14 @@ export class PredictionMarket extends BaseEntity {
   @Column({ name: 'collateral_token_id' })
   collateralTokenId: number;
 
-  @ManyToOne(() => CryptocurrencyToken, { eager: true })
+  @ManyToOne(() => CryptocurrencyToken, { eager: true, onDelete: 'NO ACTION' })
   @JoinColumn({ name: 'collateral_token_id' })
   collateralToken: CryptocurrencyToken;
 
   @Column({ name: 'amm_factory_id' })
   ammFactoryId: number;
 
-  @ManyToOne(() => MarketMakerFactory)
+  @ManyToOne(() => MarketMakerFactory, { onDelete: 'NO ACTION' })
   @JoinColumn({ name: 'amm_factory_id' })
   ammFactory: MarketMakerFactory;
 

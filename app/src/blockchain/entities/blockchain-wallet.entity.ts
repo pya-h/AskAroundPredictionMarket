@@ -16,7 +16,7 @@ export class BlockchainWallet extends BaseEntity {
   @Column({ name: 'user_id', type: 'integer', unique: true, nullable: false })
   userId: number;
 
-  @OneToOne(() => User)
+  @OneToOne(() => User, { onDelete: 'NO ACTION' })
   @JoinColumn({ name: 'user_id' })
   user: User;
 

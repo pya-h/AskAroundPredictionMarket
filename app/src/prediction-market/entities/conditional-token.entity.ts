@@ -8,7 +8,7 @@ export class ConditionalToken extends BaseEntity {
   @Column({ name: 'market_id', type: 'integer' })
   marketId: number;
 
-  @ManyToOne(() => PredictionMarket)
+  @ManyToOne(() => PredictionMarket, { onDelete: 'NO ACTION' })
   @JoinColumn({ name: 'market_id' })
   market: PredictionMarket;
 
@@ -21,7 +21,7 @@ export class ConditionalToken extends BaseEntity {
   @Column({ name: 'prediction_outcome_id' })
   predictionOutcomeId: number;
 
-  @ManyToOne(() => PredictionOutcome, { eager: true })
+  @ManyToOne(() => PredictionOutcome, { eager: true, onDelete: 'NO ACTION' })
   @JoinColumn({ name: 'prediction_outcome_id' })
   predictionOutcome: PredictionOutcome;
 
