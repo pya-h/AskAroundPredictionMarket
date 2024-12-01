@@ -15,6 +15,7 @@ import { ConditionalToken } from './entities/conditional-token.entity';
 import { OutcomeCollection } from './entities/outcome-collection.entity';
 import { MarketCategory } from './entities/market-category.entity';
 import { GetMarketsQuery } from './dto/get-markets.dto';
+import { User } from '../user/entities/user.entity';
 
 @Injectable()
 export class PredictionMarketService {
@@ -220,10 +221,7 @@ export class PredictionMarketService {
     amount: number;
     outcomeIndex: number;
   }) {
-    const market = await this.getMarket(marketId, [
-      'ammFactory',
-      'collateralToken',
-    ]);
+    const market = await this.getMarket(marketId, ['ammFactory']); // Also collateral token which is set 'eager', if you intend to disable the eager option, you should add it here.
     if (!market) throw new NotFoundException('No such market!');
     if (market.shouldResolveAt < new Date())
       throw new BadRequestException('This market is closed!');
@@ -232,5 +230,22 @@ export class PredictionMarketService {
 
     // TODO: Also check some other important checks
     return this.blockchainService.trade(traderId, market, outcomeIndex, amount);
+  }
+
+  async getConditionalTokenBalance(
+    user: User,
+    marketId: number,
+    indexSet: number,
+  ) {
+    const market = await this.getMarket(marketId);
+    if (!market) throw new NotFoundException('Market not found!');
+    if (indexSet >= market.numberOfOutcomes)
+      // TODO: If you want to use all different collections, this check condition must change
+      throw new BadRequestException('This market does not have such outcome!');
+    return this.blockchainService.getUserConditionalTokenBalance(
+      user.id,
+      market,
+      indexSet,
+    );
   }
 }

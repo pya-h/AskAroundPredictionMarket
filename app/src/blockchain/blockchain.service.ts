@@ -16,7 +16,8 @@ import { CryptocurrencyToken } from './entities/cryptocurrency-token.entity';
 import { Oracle } from '../prediction-market/entities/oracle.entity';
 import { MarketMakerFactory } from './entities/market-maker-factory.entity';
 import { CryptoTokenEnum } from './enums/crypto-token.enum';
-import { PredictionMarket } from 'src/prediction-market/entities/market.entity';
+import { PredictionMarket } from '../prediction-market/entities/market.entity';
+import BigNumber from 'bignumber.js';
 
 @Injectable()
 export class BlockchainService {
@@ -364,17 +365,17 @@ export class BlockchainService {
     const collateralTokenContract = new ethers.Contract(
       market.collateralToken.address,
       market.collateralToken.abi,
-      this.operator.ethers,
+      tradersEthersWallet,
     );
-    const formattedAmount = BigInt(
-      Math.abs(amount) *
-        Math.pow(10, Number(await collateralTokenContract.decimals())),
+    console.log('weth9 decimals: ', await collateralTokenContract.decimals());
+    const formattedAmount = new BigNumber(Math.abs(amount)).multipliedBy(
+      Math.pow(10, Number(await collateralTokenContract.decimals())),
     );
     return amount > 0
       ? this.buyOutcomeToken(
           traderWallet.publicKey,
           market,
-          formattedAmount,
+          BigInt(formattedAmount.toString()),
           selectedOutcomeIndex,
           marketMakerContract,
           collateralTokenContract,
@@ -382,7 +383,7 @@ export class BlockchainService {
       : this.sellOutcomeToken(
           traderWallet.publicKey,
           market,
-          formattedAmount,
+          BigInt(formattedAmount.toString()),
           selectedOutcomeIndex,
           marketMakerContract,
         );
@@ -402,34 +403,37 @@ export class BlockchainService {
         index === selectedOutcomeIndex ? formattedAmount : 0n,
     );
 
-    const cost = await marketMakerContract.calcNetCost(outcomeTokenAmounts); // FIXME: this mthod is only for lmsr, fpmm contract has separate methods for buy and sell
-    console.log(cost);
-    const collateralBalance = BigInt(
-      await collateralTokenContract.balanceOf(buyerAddress),
-    );
-    console.log(collateralBalance);
-    if (cost > collateralBalance) {
-      throw new ForbiddenException(
-        `You do not have enough ${market.collateralToken.name} to buy such amount!`,
-      );
-      // const collateralDepositTx = await collateralTokenContract.deposit({
-      //   value: formattedAmount,
-      //   nonce: await this.operator.ethers.getNonce(),
-      // });
-      // await collateralDepositTx.wait();
-      // console.log(
-      //   'Collateral token deposit completed, trx:',
-      //   collateralDepositTx,
-      // );
+    const [cost, collateralBalance] = (
+      await Promise.all([
+        marketMakerContract.calcNetCost(outcomeTokenAmounts),
+        collateralTokenContract.balanceOf(buyerAddress),
+      ])
+    ).map((x) => BigInt(x));
+    // FIXME: 'calcNetCost' method is only for lmsr, fpmm contract has separate methods for buy and sell
 
-      // const approveTx = await collateralTokenContract.approve(
-      //   market.address,
-      //   formattedAmount,
-      //   {from: buyerAddress}
-      // );
-      // await approveTx.wait();
+    console.log('Buy cost is: ', cost);
+    console.log('User collateral Balance: ', collateralBalance);
+
+    if (cost > collateralBalance) {
+      // If user does not have enough collateral, deposit ETH from their wallet to gain collateral.
+      const collateralDepositTx = await collateralTokenContract.deposit({
+        value: (cost - collateralBalance).toString(),
+      });
+      await collateralDepositTx.wait();
+
+      const approveTx = await collateralTokenContract.approve(
+        market.address,
+        formattedAmount.toString(),
+      );
+      await approveTx.wait();
+      console.warn(
+        'New user balance after supporting deposit: ',
+        await collateralTokenContract.balanceOf(buyerAddress),
+      );
+
+      // FIXME: What if user does not have enough ETH to deposit for collateral
     }
-    // checkout wether such amount of token exists to be bought or not/ of not provide by operator.
+    // checkout wether such amount of token exists to be bought or not of not provide by operator.
     return marketMakerContract.trade(outcomeTokenAmounts, cost);
   }
 
@@ -449,7 +453,7 @@ export class BlockchainService {
       await this.conditionalTokensContract.setApprovalForAll(
         market.address,
         true,
-        // sellerAddress, // FIXME: This is not in contract signature and it doesnt make sense, so why its in gnosis example project source code?
+        // sellerAddress, // FIXME: This is not in contract signature and it doesn't make sense, so why its in gnosis example project source code?
       );
     }
 
@@ -461,12 +465,46 @@ export class BlockchainService {
     const profit =
       -(await marketMakerContract.calcNetCost(outcomeTokenAmounts));
 
-    // FIXME: this mthod is only for lmsr, fpmm contract has separate methods for buy and sell
+    // FIXME: this method is only for lmsr, fpmm contract has separate methods for buy and sell
     return marketMakerContract.trade(
       outcomeTokenAmounts,
       profit,
       sellerAddress,
     );
+  }
+
+  async getUserConditionalTokenBalance(
+    userId: number,
+    market: PredictionMarket,
+    indexSet: number,
+  ) {
+    const userBlockchainWallet = await this.getBlockchainWallet(userId);
+    const collectionId = await this.getCollectionId(
+      market.conditionId,
+      indexSet,
+    );
+    if (!collectionId) throw new NotFoundException('Invalid outcome!');
+    const collateralTokenContract = new ethers.Contract(
+      market.collateralToken.address,
+      market.collateralToken.abi,
+      this.operator.ethers,
+    );
+    const [positionId, ctDecimals] = await Promise.all([
+      this.getPositionId(market.collateralToken, collectionId),
+      collateralTokenContract.decimals(), // TODO: Based on gnosis, this CT decimals equals to its collateral token decimals (?)
+    ]);
+    if (!positionId)
+      throw new ConflictException(
+        'Something went wrong while calculating balance',
+      );
+    const balanceWei = new BigNumber(
+      await this.conditionalTokensContract.balanceOf(
+        userBlockchainWallet.publicKey,
+        positionId,
+      ),
+    );
+    console.log('balance (wei):', balanceWei, 'dec:', ctDecimals);
+    return balanceWei.div(Math.pow(10, Number(ctDecimals)));
   }
 
   async getBlocksTransactions(blockNumber: number) {

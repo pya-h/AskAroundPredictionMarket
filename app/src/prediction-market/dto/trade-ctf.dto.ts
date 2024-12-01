@@ -1,7 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsInt, IsNotEmpty, IsNumber, IsPositive } from 'class-validator';
 
-export class TradeCoditionalToken {
+export class TradeConditionalToken {
   @ApiProperty({
     description: 'Market Id',
     required: true,

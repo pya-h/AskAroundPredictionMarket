@@ -61,7 +61,7 @@ Content-Type: application/json
 DELETE {{host}}/user/2
 
 
-### Add usere badge
+### Add user badge
 POST {{host}}/user/badge
 Content-Type: application/json
 
