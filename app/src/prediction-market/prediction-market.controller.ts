@@ -83,12 +83,12 @@ export class PredictionMarketController {
   @Get('ctf/balance')
   getConditionalTokenBalance(
     @CurrentUser() user: User,
-    @Query() { market, indexset }: GetConditionalTokenBalanceQuery,
+    @Query() { market, outcome }: GetConditionalTokenBalanceQuery,
   ) {
     return this.predictionMarketService.getConditionalTokenBalance(
       user,
       +market,
-      +indexset,
+      +outcome,
     );
   }
 }

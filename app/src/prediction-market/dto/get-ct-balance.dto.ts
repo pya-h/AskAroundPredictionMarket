@@ -14,5 +14,5 @@ export class GetConditionalTokenBalanceQuery {
     description: 'Index of the token.',
     required: true,
   })
-  indexset?: string;
+  outcome?: string;
 }

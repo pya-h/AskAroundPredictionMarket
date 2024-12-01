@@ -49,4 +49,4 @@ Content-Type: application/json
 }
 
 ### Get balance of a conditional token
-GET {{host}}/prediction-market/ctf/balance?market=2&indexset=0
+GET {{host}}/prediction-market/ctf/balance?market=2&outcome=0
