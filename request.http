@@ -29,7 +29,7 @@ Content-Type: application/json
 GET  {{host}}/prediction-market/
 
 ### Sell tokens
-POST  {{host}}/prediction-market/sell-ctf
+POST  {{host}}/prediction-market/ctf/sell
 Content-Type: application/json
 
 {
@@ -39,11 +39,14 @@ Content-Type: application/json
 }
 
 ### Buy tokens
-POST  {{host}}/prediction-market/buy-ctf
+POST  {{host}}/prediction-market/ctf/buy
 Content-Type: application/json
 
 {
-    "marketId": 1,
-    "outcomeIndex": 0,
-    "amount": 1
+    "marketId": 2,
+    "outcomeIndex": 1,
+    "amount": 1.1
 }
+
+### Get balance of a conditional token
+GET {{host}}/prediction-market/ctf/balance?market=2&indexset=1
