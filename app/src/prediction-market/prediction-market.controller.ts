@@ -68,7 +68,7 @@ export class PredictionMarketController {
     });
   }
 
-  @Post('ctf/cell')
+  @Post('ctf/sell')
   sellOutcomeToken(
     @CurrentUser() user: User,
     @Body() tradeTokenDto: TradeConditionalToken,

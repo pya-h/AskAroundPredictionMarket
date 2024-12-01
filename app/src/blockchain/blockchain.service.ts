@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -382,6 +381,7 @@ export class BlockchainService {
         )
       : this.sellOutcomeToken(
           traderWallet.publicKey,
+          tradersEthersWallet,
           market,
           BigInt(formattedAmount.toString()),
           selectedOutcomeIndex,
@@ -439,22 +439,26 @@ export class BlockchainService {
 
   async sellOutcomeToken(
     sellerAddress: string,
+    sellerEthersWallet: ethers.Wallet,
     market: PredictionMarket,
     formattedAmount: bigint,
     selectedOutcomeIndex: number,
     marketMakerContract: ethers.Contract,
   ) {
+    const conditionalTokensContract = new ethers.Contract(
+      ConditionTokenContractData.address,
+      ConditionTokenContractData.abi,
+      sellerEthersWallet,
+    );
     // TODO:  Checkout if user has such amount of selected tokens to sell ot noy
-    const isApproved = await this.conditionalTokensContract.isApprovedForAll(
+    const isApproved = await conditionalTokensContract.isApprovedForAll(
       sellerAddress,
       market.address,
     );
     if (!isApproved) {
-      await this.conditionalTokensContract.setApprovalForAll(
-        market.address,
-        true,
-        // sellerAddress, // FIXME: This is not in contract signature and it doesn't make sense, so why its in gnosis example project source code?
-      );
+      await conditionalTokensContract.setApprovalForAll(market.address, true, {
+        nonce: await sellerEthersWallet.getNonce(),
+      });
     }
 
     const outcomeTokenAmounts = Array.from(
@@ -466,11 +470,7 @@ export class BlockchainService {
       -(await marketMakerContract.calcNetCost(outcomeTokenAmounts));
 
     // FIXME: this method is only for lmsr, fpmm contract has separate methods for buy and sell
-    return marketMakerContract.trade(
-      outcomeTokenAmounts,
-      profit,
-      sellerAddress,
-    );
+    return marketMakerContract.trade(outcomeTokenAmounts, profit);
   }
 
   async getUserConditionalTokenBalance(

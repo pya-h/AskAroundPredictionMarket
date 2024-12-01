@@ -44,7 +44,7 @@ export class PredictionMarket extends BaseEntity {
   chain: Chain;
 
   @Column({ name: 'category_id', nullable: true })
-  categoryId: number | null; // TODO: Cnsider null as a 'General' category, and live this column nullable,
+  categoryId: number | null; // TODO: null as a 'General' category, and leave this column nullable,
   // or Add a General Category via migrations and prevent this to be nullable. [Second one seems more logical]
 
   @ManyToOne(() => MarketCategory)
