@@ -1,0 +1,33 @@
+<div class="market-detail">
+  <h2>{{ market.question }}</h2>
+  <ul class="outcomes">
+    <li *ngFor="let outcome of market.outcomeTokens; let i = index">
+      <span>{{ outcome }}</span>
+      <button class="btn btn-primary" (click)="openModal(i, 'buy')">Buy</button>
+      <button class="btn btn-secondary" (click)="openModal(i, 'sell')">Sell</button>
+    </li>
+  </ul>
+
+  <div class="modal" tabindex="-1" [class.show]="isModalOpen" style="display: block;" *ngIf="isModalOpen">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">{{ modalType | titlecase }} Outcome</h5>
+          <button type="button" class="btn-close" (click)="closeModal()"></button>
+        </div>
+        <div class="modal-body">
+          <form>
+            <div class="mb-3">
+              <label for="amount" class="form-label">Amount</label>
+              <input type="number" id="amount" class="form-control" [(ngModel)]="amount" name="amount">
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary" (click)="confirmAction()">Confirm</button>
+          <button type="button" class="btn btn-secondary" (click)="closeModal()">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -14,4 +14,12 @@ export class Chain extends BaseEntity {
 
   @Column({ nullable: true })
   icon?: string;
+
+  @Column({
+    name: 'last_processed_block',
+    type: 'bigint',
+    nullable: true,
+    default: null,
+  })
+  lastProcessedBlock: bigint;
 }

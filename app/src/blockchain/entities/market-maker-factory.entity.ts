@@ -1,12 +1,19 @@
 import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../core/base.entity';
 import { Chain } from './chain.entity';
+import { PredictionMarketTypesEnum } from '../enums/market-types.enum';
 
 @Entity('market_maker_factory')
 export class MarketMakerFactory extends BaseEntity {
   // This entity holds the data of xMarketMakerFactory contracts, which will create xMarketMaker contracts.
-  @Column({ type: 'varchar', length: 32 })
-  name: string;
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: PredictionMarketTypesEnum.LMSR.toString(),
+    enum: PredictionMarketTypesEnum,
+    enumName: 'PredictionMarketTypesEnum',
+  })
+  type: string;
 
   @Column({ name: 'address', type: 'varchar', length: 128 })
   address: string;

@@ -4,11 +4,8 @@ import { User } from '../../user/entities/user.entity';
 
 @Entity('blockchain_wallet')
 export class BlockchainWallet extends BaseEntity {
-  @Column({ type: 'varchar', length: 32 })
-  name: string;
-
-  @Column({ name: 'public_key', type: 'varchar', length: 128 })
-  publicKey: string;
+  @Column({ name: 'address', type: 'varchar', length: 256 })
+  address: string;
 
   @Column({ nullable: true }) // TODO: Later decide if this nullable must be removed or not
   secret: string; // TODO: private key (does it need encryption?)

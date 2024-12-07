@@ -1,14 +1,25 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
+import { ConfigService } from '../config/config.service';
+import { PredictionMarketTypesEnum } from '../blockchain/enums/market-types.enum';
+
+const configService = new ConfigService();
 
 export class InsertMarketMakerData1732526194175 implements MigrationInterface {
+  private marketMakerFactoryContractAddress: string;
+
+  constructor() {
+    this.marketMakerFactoryContractAddress = configService.getOrThrow(
+      'TESTNET_MARKET_MAKER_ADDRESS',
+    );
+  }
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
       `INSERT INTO public."market_maker_factory" 
-      ("name", address, chain_id, max_supported_outcomes, title, description,
-        mm_creation_event, mm_address_field, factory_abi, mm_abi) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          ("type", address, chain_id, max_supported_outcomes, title, description,
+            mm_creation_event, mm_address_field, factory_abi, mm_abi) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
-        'LmsrMarketMakerFactory',
-        '0x9561C133DD8580860B6b7E504bC5Aa500f0f06a7',
+        PredictionMarketTypesEnum.LMSR.toString(),
+        this.marketMakerFactoryContractAddress,
         1337,
         5,
         'LMSR Market Maker Factory Contract',
@@ -717,7 +728,7 @@ export class InsertMarketMakerData1732526194175 implements MigrationInterface {
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
       `DELETE FROM public."market_maker_factory" WHERE address=$1`,
-      ['0x9561C133DD8580860B6b7E504bC5Aa500f0f06a7'],
+      [this.marketMakerFactoryContractAddress],
     );
   }
 }

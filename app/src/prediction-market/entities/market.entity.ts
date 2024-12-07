@@ -7,9 +7,19 @@ import { MarketMakerFactory } from '../../blockchain/entities/market-maker-facto
 import { Chain } from '../../blockchain/entities/chain.entity';
 import { MarketCategory } from './market-category.entity';
 import { User } from '../../user/entities/user.entity';
+import { PredictionMarketTypesEnum } from '../../blockchain/enums/market-types.enum';
 
 @Entity('prediction_market')
 export class PredictionMarket extends BaseEntity {
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: PredictionMarketTypesEnum.LMSR.toString(),
+    enum: PredictionMarketTypesEnum,
+    enumName: 'PredictionMarketTypesEnum',
+  })
+  type: string;
+
   @Column({
     name: 'creator_id',
     type: 'integer',
@@ -27,7 +37,7 @@ export class PredictionMarket extends BaseEntity {
   @Column({ name: 'address' })
   address: string;
 
-  @Column({ name: 'oracle_id', nullable: true })
+  @Column({ name: 'oracle_id' })
   oracleId: number;
 
   @ManyToOne(() => Oracle, { onDelete: 'NO ACTION' })
@@ -49,8 +59,16 @@ export class PredictionMarket extends BaseEntity {
   @JoinColumn({ name: 'category_id' })
   category: MarketCategory | null;
 
-  @Column()
+  @Column({ type: 'varchar', length: 1024 })
   question: string;
+
+  @Column({
+    name: 'formatted_question',
+    unique: true,
+    type: 'varchar',
+    length: 1100,
+  })
+  formattedQuestion: string;
 
   @Column({ name: 'question_hash' })
   questionHash: string;
@@ -61,14 +79,17 @@ export class PredictionMarket extends BaseEntity {
   @Column({ name: 'should_resolve_at' })
   shouldResolveAt: Date;
 
+  @Column({ name: 'closed_at', nullable: true, default: null })
+  closedAt: Date;
+
   @Column({ name: 'finalized_at', nullable: true, default: null })
   finalizedAt: Date;
 
-  @Column({ type: 'decimal' })
-  initialLiquidity: bigint;
+  @Column({ name: 'initial_liquidity', type: 'decimal' })
+  initialLiquidity: number;
 
   @Column({ type: 'decimal' })
-  liquidity: bigint;
+  liquidity: number;
 
   @Column({ name: 'collateral_token_id' })
   collateralTokenId: number;

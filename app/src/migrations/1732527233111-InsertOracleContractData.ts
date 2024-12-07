@@ -1,18 +1,28 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
+import { ConfigService } from '../config/config.service';
+
+const configService = new ConfigService();
 
 export class InsertOracleContractData1732527233111
   implements MigrationInterface
 {
+  private oracleContractAddress: string;
+
+  constructor() {
+    this.oracleContractAddress = configService.getOrThrow(
+      'TESTNET_ORACLE_ADDRESS',
+    );
+  }
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
       `INSERT INTO public."oracle" ("name", chain_id, address, description, abi) VALUES ($1, $2, $3, $4, $5)`,
       [
         'TestOracle',
         1337,
-        '0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0',
+        this.oracleContractAddress,
         'A test oracle just for testing purposes and it resolves manually usually specified endpoints or whatever.',
         JSON.stringify([
-          // FIXME: ABI needs changing, find an oracle in gnosis contracts.
+          // NOTE: Sample ABI
           {
             inputs: [
               { internalType: 'bytes32', name: '_identifier', type: 'bytes32' },
@@ -47,7 +57,7 @@ export class InsertOracleContractData1732527233111
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DELETE FROM public."oracle" WHERE address=$1`, [
-      '0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0',
+      this.oracleContractAddress,
     ]);
   }
 }

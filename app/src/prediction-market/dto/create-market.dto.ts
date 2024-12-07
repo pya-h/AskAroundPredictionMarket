@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ArrayMinSize,
   IsArray,
@@ -20,6 +20,7 @@ export class CreatePredictionMarketDto {
 
   @ApiProperty({
     description: 'Duration in which the league is open in seconds',
+    isArray: true,
   })
   @IsArray({ message: 'This field must be an array of outcome texts.' })
   @ArrayMinSize(2, { message: 'At least two outcomes are expected.' })
@@ -53,7 +54,7 @@ export class CreatePredictionMarketDto {
   })
   resolveAt: Date;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'The Question',
     required: false,
     default: null,

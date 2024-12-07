@@ -1,18 +1,12 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsNumberString } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsNumberString, IsOptional } from 'class-validator';
 
 export class GetConditionalTokenBalanceQuery {
   @IsNumberString()
-  @ApiProperty({
-    description: 'Id of the market including the token.',
-    required: true,
-  })
-  market: string;
-
-  @IsNumberString()
-  @ApiProperty({
+  @IsOptional()
+  @ApiPropertyOptional({
     description: 'Index of the token.',
-    required: true,
+    required: false,
   })
   outcome?: string;
 }

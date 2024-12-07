@@ -12,6 +12,8 @@ export class CryptocurrencyToken extends BaseEntity {
     type: 'varchar',
     length: 16,
     default: CryptoTokenEnum.WETH9.toString(),
+    enum: CryptoTokenEnum,
+    enumName: 'CryptoTokenEnum',
   })
   symbol: string;
 
@@ -24,6 +26,9 @@ export class CryptocurrencyToken extends BaseEntity {
 
   @Column()
   address: string;
+
+  @Column({ name: 'decimals', default: null, type: 'smallint' })
+  decimals?: number;
 
   @Column({ type: 'jsonb', nullable: true })
   abi?: Record<string, unknown>[];

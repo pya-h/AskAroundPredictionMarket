@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomBytes, scrypt } from 'crypto';
 import { config } from 'dotenv';
 import { promisify } from 'util';
@@ -11,6 +11,12 @@ export class ConfigService {
   // this is just simple config service used just to make other modules code similar to my another project i intend to use this project modules in.
   get<T = string>(fieldName: string): T | null {
     return (process.env[fieldName] as T) || null;
+  }
+
+  getOrThrow<T = string>(fieldName: string): T | null {
+    if (!process?.env?.[fieldName])
+      throw new NotFoundException(`Config field:${fieldName} not found.`);
+    return process.env[fieldName] as T;
   }
 
   async hashSalt(chars: string) {

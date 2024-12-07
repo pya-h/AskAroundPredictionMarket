@@ -1,17 +1,27 @@
 import { CryptoTokenEnum } from '../blockchain/enums/crypto-token.enum';
 import { MigrationInterface, QueryRunner } from 'typeorm';
+import { ConfigService } from '../config/config.service';
+
+const configService = new ConfigService();
 
 export class InsertCollateralTokenData1732525088729
   implements MigrationInterface
 {
+  private collateralTokenContractAddress: string;
+
+  constructor() {
+    this.collateralTokenContractAddress = configService.getOrThrow(
+      'TESTNET_COLLATERAL_TOKEN_ADDRESS',
+    );
+  }
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
       `INSERT INTO public."cryptocurrency_token" ("name", symbol, chain_id, address, abi) VALUES ($1, $2, $3, $4, $5)`,
       [
-        'Wrapped Ethereum 9',
+        'Wrapped Ethereum',
         CryptoTokenEnum.WETH9.toString(),
         1337,
-        '0x59d3631c86BbE35EF041872d502F218A39FBa150',
+        this.collateralTokenContractAddress,
         JSON.stringify([
           {
             constant: true,
@@ -298,7 +308,7 @@ export class InsertCollateralTokenData1732525088729
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
       `DELETE FROM public."cryptocurrency_token" WHERE address=$1`,
-      ['0x59d3631c86BbE35EF041872d502F218A39FBa150'],
+      [this.collateralTokenContractAddress],
     );
   }
 }

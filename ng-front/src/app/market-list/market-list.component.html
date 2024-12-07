@@ -1,0 +1,11 @@
+<div class="container mt-5">
+  <h2 class="text-center">Open Prediction Markets</h2>
+  <div class="list-group">
+    <button
+      *ngFor="let market of markets"
+      class="list-group-item list-group-item-action"
+      (click)="openMarket(market.id)">
+      {{ market.question }}
+    </button>
+  </div>
+</div>

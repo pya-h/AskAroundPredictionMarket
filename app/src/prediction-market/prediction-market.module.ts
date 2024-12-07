@@ -3,7 +3,7 @@ import { PredictionMarketService } from './prediction-market.service';
 import { PredictionMarket } from './entities/market.entity';
 import { PredictionOutcome } from './entities/outcome.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { BlockchainModule } from 'src/blockchain/blockchain.module';
+import { BlockchainModule } from '../blockchain/blockchain.module';
 import { PredictionMarketController } from './prediction-market.controller';
 import { Oracle } from './entities/oracle.entity';
 import { ConditionalToken } from './entities/conditional-token.entity';
