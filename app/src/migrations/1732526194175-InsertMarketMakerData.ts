@@ -1,26 +1,28 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 import { ConfigService } from '../config/config.service';
-import { PredictionMarketTypesEnum } from '../blockchain/enums/market-types.enum';
+import { PredictionMarketTypesEnum } from 'src/prediction-market-contracts/enums/market-types.enum';
 
 const configService = new ConfigService();
 
 export class InsertMarketMakerData1732526194175 implements MigrationInterface {
   private marketMakerFactoryContractAddress: string;
+  private defaultChainId: number;
 
   constructor() {
     this.marketMakerFactoryContractAddress = configService.getOrThrow(
-      'TESTNET_MARKET_MAKER_ADDRESS',
+      'NET_MARKET_MAKER_ADDRESS',
     );
+    this.defaultChainId = +configService.getOrThrow('NET_CHAIN_ID');
   }
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
       `INSERT INTO public."market_maker_factory" 
-          ("type", address, chain_id, max_supported_outcomes, title, description,
-            mm_creation_event, mm_address_field, factory_abi, mm_abi) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          ("type", address, chain_id, max_supported_outcomes, "name", description,
+            mm_creation_event, mm_address_field, abi, mm_abi) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         PredictionMarketTypesEnum.LMSR.toString(),
         this.marketMakerFactoryContractAddress,
-        1337,
+        this.defaultChainId,
         5,
         'LMSR Market Maker Factory Contract',
         'This Market maker will manage the prediction market conditional tokens with an exponential formula, its precise but costly.',

@@ -1,6 +1,6 @@
-import { CryptoTokenEnum } from '../blockchain/enums/crypto-token.enum';
 import { MigrationInterface, QueryRunner } from 'typeorm';
 import { ConfigService } from '../config/config.service';
+import { CryptoTokenEnum } from '../prediction-market-contracts/enums/crypto-token.enum';
 
 const configService = new ConfigService();
 
@@ -8,11 +8,13 @@ export class InsertCollateralTokenData1732525088729
   implements MigrationInterface
 {
   private collateralTokenContractAddress: string;
+  private defaultChainId: number;
 
   constructor() {
     this.collateralTokenContractAddress = configService.getOrThrow(
-      'TESTNET_COLLATERAL_TOKEN_ADDRESS',
+      'NET_COLLATERAL_TOKEN_ADDRESS',
     );
+    this.defaultChainId = +configService.getOrThrow('NET_CHAIN_ID');
   }
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
@@ -20,7 +22,7 @@ export class InsertCollateralTokenData1732525088729
       [
         'Wrapped Ethereum',
         CryptoTokenEnum.WETH9.toString(),
-        1337,
+        this.defaultChainId,
         this.collateralTokenContractAddress,
         JSON.stringify([
           {

@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */ // FIXME: Remove This later
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { ethers } from 'ethers';
 import { PredictionMarket } from '../../prediction-market/entities/market.entity';
 
@@ -23,9 +23,7 @@ export class FixedProductMarketHelper {
     selectedOutcomeIndex: number,
     marketMakerContract: ethers.Contract,
     collateralTokenContract: ethers.Contract,
-  ) {
-    // TODO:
-  }
+  ) {}
 
   async sellOutcomeToken(
     sellerAddress: string,
@@ -34,9 +32,7 @@ export class FixedProductMarketHelper {
     formattedAmount: bigint,
     selectedOutcomeIndex: number,
     marketMakerContract: ethers.Contract,
-  ) {
-    // TODO:
-  }
+  ) {}
 
   async getTokenPrice(market: PredictionMarket, outcomeIndex: number) {}
 }

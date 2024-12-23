@@ -2,23 +2,16 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
-import { BlockchainService } from '../blockchain/blockchain.service';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(User)
     private userRepository: Repository<User>,
-    private readonly blockchainService: BlockchainService,
   ) {}
 
   // Notice: Password must be hashed. This is just temp.
-  async create(
-    username: string,
-    email: string,
-    password: string,
-    walletAddress?: string,
-  ) {
+  async create(username: string, email: string, password: string) {
     const user: User = await this.userRepository.save(
       this.userRepository.create({
         username,
@@ -26,7 +19,6 @@ export class UserService {
         email,
       }),
     );
-    await this.blockchainService.createBlockchainWallet(user.id, walletAddress);
     return user;
   }
 

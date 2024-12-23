@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   NotImplementedException,
@@ -8,12 +9,14 @@ import {
 import { PredictionOutcome } from '../prediction-market/entities/outcome.entity';
 import { ethers } from 'ethers';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Chain } from './entities/chain.entity';
 import { Repository } from 'typeorm';
 import { BlockchainWallet } from '../blockchain-wallet/entities/blockchain-wallet.entity';
 import { ConditionTokenContractData } from './abis/ctf.abi';
-import { CryptocurrencyToken } from './entities/cryptocurrency-token.entity';
-import { Oracle } from '../prediction-market/entities/oracle.entity';
+import { CryptocurrencyToken } from '../blockchain-wallet/entities/cryptocurrency-token.entity';
+import {
+  Oracle,
+  OracleTypesEnum,
+} from '../prediction-market/entities/oracle.entity';
 import { MarketMakerFactory } from './entities/market-maker-factory.entity';
 import { CryptoTokenEnum } from './enums/crypto-token.enum';
 import { PredictionMarket } from '../prediction-market/entities/market.entity';
@@ -23,7 +26,7 @@ import { LmsrMarketHelper } from './helpers/lmsr-market.helper';
 import { BlockchainWalletService } from '../blockchain-wallet/blockchain-wallet.service';
 
 @Injectable()
-export class BlockchainService {
+export class PredictionMarketContractsService {
   private provider: ethers.JsonRpcProvider;
   private operator: { wallet: BlockchainWallet; ethers: ethers.Wallet };
   private conditionalTokensContract: ethers.Contract;
@@ -32,40 +35,9 @@ export class BlockchainService {
     return ethers.keccak256(ethers.toUtf8Bytes(data));
   }
 
-  getChain(chainId: number) {
-    return this.chainRepository.findOneBy({ id: chainId });
-  }
-
-  findChains() {
-    return this.chainRepository.find();
-  }
-
-  updateChainData(chainId: number, data: Partial<Chain>) {
-    return this.chainRepository.update({ id: chainId }, { ...data });
-  }
-
-  async syncCryptoTokenDecimalValue(token: CryptocurrencyToken) {
-    const contract = new ethers.Contract(
-      token.address,
-      token.abi,
-      this.operator.ethers,
-    );
-    token.decimals = Number(await contract.decimals());
-    return this.cryptocurrencyTokenRepository.save(token);
-  }
-
-  async getCryptoTokenDecimals(token: CryptocurrencyToken) {
-    if (!token.decimals) await this.syncCryptoTokenDecimalValue(token);
-    return token.decimals;
-  }
-
   constructor(
-    @InjectRepository(Chain)
-    private readonly chainRepository: Repository<Chain>,
     @InjectRepository(MarketMakerFactory)
     private readonly marketMakerFactoryRepository: Repository<MarketMakerFactory>,
-    @InjectRepository(CryptocurrencyToken)
-    private readonly cryptocurrencyTokenRepository: Repository<CryptocurrencyToken>,
     private readonly blockchainWalletService: BlockchainWalletService,
   ) {
     this.init().catch((ex) =>
@@ -74,12 +46,12 @@ export class BlockchainService {
   }
 
   async init() {
-    const localTestnet = await this.getChain(1337); // TODO: Decide how to set this.
+    const localTestnet = await this.blockchainWalletService.getChain(1337);
     this.provider = new ethers.JsonRpcProvider(localTestnet.rpcUrl);
     const wallet = await this.blockchainWalletService.getOperatorWallet();
     this.operator = {
       wallet,
-      ethers: new ethers.Wallet(wallet.getPrivateKey(), this.provider),
+      ethers: new ethers.Wallet(wallet.privateKey, this.provider),
     };
 
     this.conditionalTokensContract = new ethers.Contract(
@@ -137,10 +109,10 @@ export class BlockchainService {
             id: marketMakerFactoryIdentifier,
             chainId: currentChainId,
           }),
-      this.cryptocurrencyTokenRepository.findOneBy({
-        chainId: currentChainId, // TODO: Check this works fine?
-        symbol: collateralTokenSymbol.toString(),
-      }),
+      this.blockchainWalletService.getCryptocurrencyToken(
+        collateralTokenSymbol,
+        currentChainId,
+      ),
     ]);
     if (!factory) {
       throw new NotFoundException("This kind of AMM doesn't exist!");
@@ -151,13 +123,12 @@ export class BlockchainService {
       );
 
     if (!collateralToken?.abi?.length)
-      // TODO: check this works fine, too
       throw new BadRequestException(
         'Unfortunately this cryptocurrency is not supported to be used as collateral token in this network.',
       );
     const marketMakerFactoryContract = new ethers.Contract(
         factory.address,
-        factory.factoryABI,
+        factory.abi,
         this.operator.ethers,
       ),
       collateralTokenContract = new ethers.Contract(
@@ -168,11 +139,11 @@ export class BlockchainService {
     const initialLiquidity = ethers.parseEther(
       initialLiquidityInEth.toString(),
     );
-    const questionHash = this.toKeccakHash(question);
+    const questionId = this.toKeccakHash(question);
     const prepareConditionTx =
       await this.conditionalTokensContract.prepareCondition(
         oracle.address,
-        questionHash,
+        questionId,
         outcomes.length,
       );
     await prepareConditionTx.wait();
@@ -180,7 +151,7 @@ export class BlockchainService {
 
     const conditionId = await this.conditionalTokensContract.getConditionId(
       oracle.address,
-      questionHash,
+      questionId,
       outcomes.length,
     );
     console.warn('Condition id = ', conditionId);
@@ -205,7 +176,7 @@ export class BlockchainService {
     let lmsrFactoryTx = await marketMakerFactoryContract.createLMSRMarketMaker(
       ConditionTokenContractData.address,
       collateralToken.address,
-      [conditionId], // TODO: Maybe write another method to create multiple markets at the same time?
+      [conditionId],
       0,
       '0x0000000000000000000000000000000000000000',
       initialLiquidity,
@@ -244,7 +215,7 @@ export class BlockchainService {
       conditionId: conditionId as string,
       creatorId: this.operator.wallet.userId,
       question,
-      questionHash,
+      questionId,
       marketMakerFactory: factory,
       marketMakerAddress: creationLog[0].args[factory.marketMakerAddressField],
       oracle,
@@ -336,7 +307,7 @@ export class BlockchainService {
   ) {
     const traderWallet = await this.blockchainWalletService.getWallet(traderId);
     const tradersEthersWallet = new ethers.Wallet(
-      traderWallet.secret,
+      traderWallet.privateKey,
       this.provider,
     );
     const marketMakerContract = new ethers.Contract(
@@ -351,13 +322,16 @@ export class BlockchainService {
     );
     console.log(
       'weth9 decimals: ',
-      await this.getCryptoTokenDecimals(market.collateralToken),
+      await this.blockchainWalletService.getCryptoTokenDecimals(
+        market.collateralToken,
+      ),
     );
 
     switch (market.type) {
       case PredictionMarketTypesEnum.LMSR.toString():
-        const formattedAmount = new BigNumber(Math.abs(amount)).multipliedBy(
-          10 ** (await this.getCryptoTokenDecimals(market.collateralToken)),
+        const formattedAmount = await this.blockchainWalletService.etherToWei(
+          Math.abs(amount),
+          market.collateralToken,
         );
         return amount > 0
           ? LmsrMarketHelper.get(this.provider).buyOutcomeToken(
@@ -396,19 +370,25 @@ export class BlockchainService {
       outcomeIndex,
     );
     if (!collectionId) throw new NotFoundException('Invalid outcome!');
-    const [positionId, ctDecimals] = await Promise.all([
-      this.getPositionId(market.collateralToken, collectionId),
-      this.getCryptoTokenDecimals(market.collateralToken), // TODO: Based on gnosis, this CT decimals equals to its collateral token decimals (?)
-    ]);
+    const positionId = await this.getPositionId(
+      market.collateralToken,
+      collectionId,
+    );
+
     if (!positionId)
       throw new ConflictException(
         'Something went wrong while calculating balance',
       );
-    const balanceWei = new BigNumber(
-      await this.conditionalTokensContract.balanceOf(target, positionId),
+    const balanceWei = await this.conditionalTokensContract.balanceOf(
+      target,
+      positionId,
     );
-    console.log('balance (wei):', balanceWei, 'dec:', ctDecimals);
-    return balanceWei.div(10 ** ctDecimals);
+
+    console.log('balance (wei):', balanceWei);
+    return this.blockchainWalletService.weiToEthers(
+      balanceWei,
+      market.collateralToken,
+    );
   }
 
   async getUserConditionalTokenBalance(
@@ -427,6 +407,82 @@ export class BlockchainService {
 
   getMarketConditionalTokenBalance(market: PredictionMarket, indexSet: number) {
     return this.getConditionalTokenBalance(market, indexSet, market.address);
+  }
+
+  async getMarketOutcomePrice(market: PredictionMarket, index: number) {
+    const marketMakerContract = new ethers.Contract(
+      market.address,
+      market.ammFactory.marketMakerABI,
+      this.operator.ethers,
+    );
+    switch (market.type) {
+      case PredictionMarketTypesEnum.LMSR.toString():
+        const unitInWei = await this.blockchainWalletService.etherToWei(
+          1,
+          market.collateralToken,
+        );
+        return this.blockchainWalletService.weiToEthers(
+          await LmsrMarketHelper.get(this.provider).calculateOutcomeTokenPrice(
+            market,
+            index,
+            BigInt(unitInWei.toString()),
+            marketMakerContract,
+          ),
+          market.collateralToken,
+        );
+      case PredictionMarketTypesEnum.FPMM.toString():
+        throw new NotImplementedException('Not fully implemented yet.');
+      case PredictionMarketTypesEnum.ORDER_BOOK.toString():
+        throw new NotImplementedException('Not implemented yet.');
+    }
+  }
+
+  async getMarketAllOutcomePrices(market: PredictionMarket) {
+    const marketMakerContract = new ethers.Contract(
+      market.address,
+      market.ammFactory.marketMakerABI,
+      this.operator.ethers,
+    );
+    const unitInWei = BigInt(
+      (
+        await this.blockchainWalletService.etherToWei(1, market.collateralToken)
+      ).toString(),
+    );
+
+    switch (market.type) {
+      case PredictionMarketTypesEnum.LMSR.toString():
+        const mmHelper = LmsrMarketHelper.get(this.provider);
+        const prices = await Promise.all(
+          (
+            await Promise.all(
+              market.outcomeTokens.map((outcome) =>
+                mmHelper.calculateOutcomeTokenPrice(
+                  market,
+                  outcome.tokenIndex,
+                  unitInWei,
+                  marketMakerContract,
+                ),
+              ),
+            )
+          ).map((priceInWei) =>
+            this.blockchainWalletService.weiToEthers(
+              priceInWei,
+              market.collateralToken,
+            ),
+          ),
+        );
+
+        return prices.map((price, i) => ({
+          outcome: market.outcomeTokens[i].predictionOutcome.title,
+          index: market.outcomeTokens[i].tokenIndex,
+          price,
+          token: market.outcomeTokens[i],
+        }));
+      case PredictionMarketTypesEnum.FPMM.toString():
+        throw new NotImplementedException('Not fully implemented yet.');
+      case PredictionMarketTypesEnum.ORDER_BOOK.toString():
+        throw new NotImplementedException('Not implemented yet.');
+    }
   }
 
   async closeMarket(market: PredictionMarket) {
@@ -450,16 +506,78 @@ export class BlockchainService {
         ).getOutcomeTokenMarginalPrices(market, outcomeIndex);
         break;
       case PredictionMarketTypesEnum.FPMM.toString():
-        // TODO: probably this one should be manually calculated using market liquidity.
         throw new NotImplementedException('Not fully implemented yet.');
       case PredictionMarketTypesEnum.ORDER_BOOK.toString():
         throw new NotImplementedException('Not implemented yet.');
-        break;
       default:
         throw new ConflictException('Invalid market type!');
     }
     return new BigNumber(weiPrice.toString()).div(
-      10 ** (await this.getCryptoTokenDecimals(market.collateralToken)),
+      10 **
+        (await this.blockchainWalletService.getCryptoTokenDecimals(
+          market.collateralToken,
+        )),
     );
+  }
+
+  async resolveMarket(market: PredictionMarket, payoutVector: number[]) {
+    switch (market.oracle.type) {
+      case OracleTypesEnum.CENTRALIZED.toString():
+        const oracleWallet = new ethers.Wallet(
+          market.oracle.account.privateKey,
+          this.provider,
+        );
+        const conditionalTokenContract = new ethers.Contract(
+          ConditionTokenContractData.address,
+          ConditionTokenContractData.abi,
+          oracleWallet,
+        );
+        const tx = await conditionalTokenContract.reportPayouts(
+          market.questionId,
+          payoutVector,
+        );
+        await tx.wait();
+        return tx;
+
+      case OracleTypesEnum.DECENTRALIZED.toString():
+        throw new NotImplementedException(
+          'Decentralized oracle is not implemented yet.',
+        );
+    }
+  }
+
+  async redeemMarketRewards(userId: number, market: PredictionMarket) {
+    try {
+      const indexSets = market.outcomeTokens.map((outcomeToken) =>
+        this.outcomeIndexToIndexSet(outcomeToken.tokenIndex),
+      );
+      const userWallet = await this.blockchainWalletService.getWallet(userId);
+      if (!userWallet?.secret)
+        throw new ForbiddenException('Missing user blockchain wallet data!');
+      const etherWallet = new ethers.Wallet(
+        userWallet.privateKey,
+        this.provider,
+      );
+      const ctContract = new ethers.Contract(
+        ConditionTokenContractData.address,
+        ConditionTokenContractData.abi,
+        etherWallet,
+      );
+      const tx = await ctContract.redeemPositions(
+        market.collateralToken.address,
+        this.blockchainWalletService.zeroAddress,
+        market.conditionId,
+        indexSets,
+      );
+
+      await tx.wait();
+      // TODO: search for PayoutRedemption event:
+      //    also Get total amount redeemed for user; return/throw proper message if the amount is zero
+      return {
+        redeemTx: tx,
+      };
+    } catch (ex) {
+      console.error(ex);
+    }
   }
 }

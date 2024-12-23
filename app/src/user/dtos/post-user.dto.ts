@@ -1,9 +1,4 @@
-import {
-  IsEmail,
-  IsEthereumAddress,
-  IsString,
-  IsStrongPassword,
-} from 'class-validator';
+import { IsEmail, IsString, IsStrongPassword } from 'class-validator';
 
 export class PostUserDto {
   @IsString()
@@ -16,7 +11,4 @@ export class PostUserDto {
   @IsString()
   @IsStrongPassword()
   password: string;
-
-  @IsEthereumAddress()
-  walletAddress: string;
 }

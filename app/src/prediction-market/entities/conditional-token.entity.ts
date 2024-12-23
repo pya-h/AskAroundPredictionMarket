@@ -25,6 +25,14 @@ export class ConditionalToken extends BaseEntity {
   @JoinColumn({ name: 'prediction_outcome_id' })
   predictionOutcome: PredictionOutcome;
 
-  @Column({ type: 'float8', default: '0.0' })
-  price: number;
+  @Column({ name: 'amount_invested', type: 'float8', default: 0.0 })
+  amountInvested: number;
+
+  @Column({
+    name: 'trueness_ratio',
+    type: 'float4',
+    nullable: true,
+    default: null,
+  })
+  truenessRatio: number;
 }

@@ -3,12 +3,13 @@ import { PredictionMarketService } from './prediction-market.service';
 import { PredictionMarket } from './entities/market.entity';
 import { PredictionOutcome } from './entities/outcome.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { BlockchainModule } from '../blockchain/blockchain.module';
+import { PredictionMarketContractsModule } from '../prediction-market-contracts/prediction-market-contracts.module';
 import { PredictionMarketController } from './prediction-market.controller';
 import { Oracle } from './entities/oracle.entity';
 import { ConditionalToken } from './entities/conditional-token.entity';
 import { OutcomeCollection } from './entities/outcome-collection.entity';
 import { MarketCategory } from './entities/market-category.entity';
+import { BlockchainWalletModule } from '../blockchain-wallet/blockchain-wallet.module';
 
 @Module({
   imports: [
@@ -20,7 +21,8 @@ import { MarketCategory } from './entities/market-category.entity';
       OutcomeCollection,
       MarketCategory,
     ]),
-    BlockchainModule,
+    PredictionMarketContractsModule,
+    BlockchainWalletModule,
   ],
   providers: [PredictionMarketService],
   exports: [PredictionMarketService],

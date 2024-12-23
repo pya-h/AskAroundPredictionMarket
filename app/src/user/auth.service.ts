@@ -14,12 +14,7 @@ export class AuthService {
     private readonly configService: ConfigService,
   ) {}
 
-  async register(
-    username: string,
-    email: string,
-    password: string,
-    walletAddress: string,
-  ) {
+  async register(username: string, email: string, password: string) {
     let [existingUser] = await this.userService.find({ username });
     if (existingUser) throw new ConflictException('User already exists.');
     [existingUser] = await this.userService.find({ email });
@@ -29,7 +24,6 @@ export class AuthService {
       username,
       email,
       await this.configService.hashSalt(password),
-      walletAddress,
     );
     return user;
   }

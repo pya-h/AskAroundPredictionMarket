@@ -14,6 +14,21 @@ export class LmsrMarketHelper {
     return LmsrMarketHelper.instance;
   }
 
+  calculateOutcomeTokenPrice(
+    market: PredictionMarket,
+    outcomeIndex: number,
+    amountInWei: bigint | string,
+    marketMakerContract: ethers.Contract,
+  ): Promise<bigint> {
+    return marketMakerContract.calcNetCost(
+      Array.from(
+        { length: market.numberOfOutcomes },
+        (_: unknown, index: number) =>
+          index === outcomeIndex ? amountInWei : 0n,
+      ),
+    );
+  }
+
   async buyOutcomeToken(
     buyerAddress: string,
     market: PredictionMarket,
@@ -35,15 +50,9 @@ export class LmsrMarketHelper {
       ])
     ).map((x) => BigInt(x));
 
-    console.log(
-      'Buy cost is: ',
-      cost,
-      'User collateral Balance: ',
-      collateralBalance,
-    );
+    console.log('Buy cost is: ', cost);
 
     if (cost > collateralBalance) {
-      // If user does not have enough collateral, deposit ETH from their wallet to gain collateral.
       const collateralDepositTx = await collateralTokenContract.deposit({
         value: (cost - collateralBalance).toString(),
       });
@@ -54,14 +63,7 @@ export class LmsrMarketHelper {
         formattedAmount.toString(),
       );
       await approveTx.wait();
-      console.warn(
-        'New user balance after supporting deposit: ',
-        await collateralTokenContract.balanceOf(buyerAddress),
-      );
     }
-    // TODO: Handle this special situations properly and precisely:
-    // 1- Market does not have enough tokens to provide and sell to the user.
-    // 2- User Does not have enough Collateral(e.g. WETH9) to buy such amount of token.
 
     return marketMakerContract.trade(outcomeTokenAmounts, cost);
   }
@@ -79,7 +81,6 @@ export class LmsrMarketHelper {
       ConditionTokenContractData.abi,
       sellerEthersWallet,
     );
-    // TODO: Checkout if user has such amount of selected tokens to sell ot noy
     const isApproved = await conditionalTokensContract.isApprovedForAll(
       sellerAddress,
       market.address,

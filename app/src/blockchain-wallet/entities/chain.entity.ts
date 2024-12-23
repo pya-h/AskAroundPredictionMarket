@@ -12,14 +12,28 @@ export class Chain extends BaseEntity {
   @Column({ name: 'rpc_url' })
   rpcUrl: string;
 
+  @Column({ name: 'ws_rpc_url', nullable: true, default: null })
+  wsRpcUrl: string;
+
   @Column({ nullable: true })
   icon?: string;
 
   @Column({
-    name: 'last_processed_block',
+    name: 'block_process_offset',
     type: 'bigint',
     nullable: true,
     default: null,
   })
-  lastProcessedBlock: bigint;
+  blockProcessOffset: bigint;
+
+  @Column({
+    name: 'block_process_range',
+    type: 'smallint',
+    default: 50,
+  })
+  blockProcessRange: number;
+
+  get webSocketRpcUrl() {
+    return this.wsRpcUrl || this.rpcUrl.replace('http', 'ws');
+  }
 }

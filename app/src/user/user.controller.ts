@@ -39,14 +39,9 @@ export class UserController {
   @Post('/register')
   async register(@Body() body: PostUserDto, @Session() session: any) {
     if (session.userID) throw new ConflictException('You are logged in.');
-    const { username, password, email, walletAddress } = body;
+    const { username, password, email } = body;
 
-    const user = await this.authService.register(
-      username,
-      email,
-      password,
-      walletAddress,
-    );
+    const user = await this.authService.register(username, email, password);
     session.userID = user.id;
     return user;
   }

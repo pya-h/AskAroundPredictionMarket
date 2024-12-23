@@ -3,21 +3,24 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  MethodNotAllowedException,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { PredictionMarket } from './entities/market.entity';
 import {
+  FindOptionsOrder,
   FindOptionsWhere,
   ILike,
-  MoreThanOrEqual,
+  LessThanOrEqual,
   Not,
   Repository,
+  TreeRepository,
 } from 'typeorm';
 import { PredictionOutcome } from './entities/outcome.entity';
-import { BlockchainService } from '../blockchain/blockchain.service';
-import { CryptoTokenEnum } from '../blockchain/enums/crypto-token.enum';
-import { Oracle } from './entities/oracle.entity';
+import { PredictionMarketContractsService } from '../prediction-market-contracts/prediction-market-contracts.service';
+import { CryptoTokenEnum } from '../prediction-market-contracts/enums/crypto-token.enum';
+import { Oracle, OracleTypesEnum } from './entities/oracle.entity';
 import { ConditionalToken } from './entities/conditional-token.entity';
 import { OutcomeCollection } from './entities/outcome-collection.entity';
 import { MarketCategory } from './entities/market-category.entity';
@@ -25,6 +28,11 @@ import { GetMarketsQuery } from './dto/get-markets.dto';
 import { User } from '../user/entities/user.entity';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PredictionMarketStatusEnum } from './enums/market-status.enum';
+import { PredictionMarketTradeDataType } from '../blockchain-indexer/types/trade-data.type';
+import { BlockchainWalletService } from '../blockchain-wallet/blockchain-wallet.service';
+import { PredictionMarketResolutionDataType } from 'src/blockchain-indexer/types/resolution-data.type';
+import { LoggerService } from 'src/logger/logger.service';
+import { UpdatePredictionMarketCategoryDto } from './dto/update-category-data.dto';
 
 @Injectable()
 export class PredictionMarketService {
@@ -40,18 +48,16 @@ export class PredictionMarketService {
     @InjectRepository(OutcomeCollection)
     private readonly outcomeCollectionRepository: Repository<OutcomeCollection>,
     @InjectRepository(MarketCategory)
-    private readonly marketCategoryRepository: Repository<MarketCategory>,
-
-    private readonly blockchainService: BlockchainService,
+    private readonly marketCategoryRepository: TreeRepository<MarketCategory>,
+    private readonly predictionMarketContractsService: PredictionMarketContractsService,
+    private readonly blockchainWalletService: BlockchainWalletService,
+    private readonly loggerService: LoggerService,
   ) {}
 
-  async getDefaultOracle(chainId?: number) {
+  async getDefaultOracle() {
     return this.oracleRepository.findOne({
       where: {
-        chainId: chainId || (await this.blockchainService.getCurrentChainId()),
-      },
-      order: {
-        id: 'ASC',
+        id: 0,
       },
     });
   }
@@ -73,13 +79,152 @@ export class PredictionMarketService {
     );
   }
 
-  findCategoryById(id: number) {
-    return this.marketCategoryRepository.findOneBy({ id });
+  findByQuestion(question: string, ...relations: string[]) {
+    return this.predictionMarketRepository.find({
+      where: {
+        question: ILike(question.trim()),
+        ...(relations?.length ? { relations } : {}),
+      },
+    });
+  }
+
+  findByQuestionId(
+    questionId: string,
+    {
+      conditionId = null, // conditionId can be used to make sure for more assurance
+      relations = null,
+      order = null,
+    }: {
+      conditionId?: string;
+      relations?: string[];
+      order: FindOptionsOrder<PredictionMarket>;
+    },
+  ) {
+    return this.predictionMarketRepository.findOne({
+      where: {
+        questionId,
+        ...(conditionId ? { conditionId } : {}),
+      },
+      ...(relations?.length ? { relations } : {}),
+      ...(order ? { order } : {}),
+    });
+  }
+
+  async isQuestionRepetitive(question: string) {
+    return Boolean(
+      await this.predictionMarketRepository.findOneBy({
+        question: ILike(question.trim()),
+      }),
+    );
   }
 
   formatQuestionText(question: string) {
     // Generate a unique string from question, since using repetitive question texts will generate repetitive hashes, which causes the new market creation operation to crash.
     return `${Date.now()}-${question}`;
+  }
+
+  async doesCategoryExist(categoryId: number) {
+    return Boolean(
+      await this.marketCategoryRepository.findOneBy({ id: categoryId }),
+    );
+  }
+
+  async getCategory(
+    id: number,
+    {
+      relations = null,
+      subCategoriesOrder = null,
+    }: {
+      relations?: string[];
+      subCategoriesOrder?: FindOptionsOrder<MarketCategory>;
+    } = {},
+  ) {
+    const category = await this.marketCategoryRepository.findOne({
+      where: { id },
+      ...(relations?.length ? { relations } : {}),
+      ...(subCategoriesOrder
+        ? { order: { subCategories: subCategoriesOrder } }
+        : {}),
+    });
+    if (category.subCategories?.length)
+      category.subCategories = (
+        await this.marketCategoryRepository.findDescendantsTree(category)
+      ).subCategories;
+    if (category.parent)
+      category.parent = (
+        await this.marketCategoryRepository.findAncestorsTree(category)
+      ).parent;
+    return category;
+  }
+
+  findCategories({
+    relations = null,
+    order = null,
+    treeView = false,
+  }: {
+    relations?: string[];
+    order?: FindOptionsOrder<MarketCategory>;
+    treeView?: boolean;
+  } = {}) {
+    if (treeView) return this.marketCategoryRepository.findTrees();
+    return this.marketCategoryRepository.find({
+      ...(relations?.length ? { relations } : {}),
+      ...(order ? { order } : {}),
+    });
+  }
+
+  async addNewCategory(
+    name: string,
+    description?: string,
+    iconUrl?: string,
+    parentId?: number,
+  ) {
+    if (await this.marketCategoryRepository.findOneBy({ name: ILike(name) }))
+      throw new ConflictException('This category already exists.');
+    if (parentId != null && !(await this.doesCategoryExist(parentId)))
+      throw new NotFoundException(
+        "The parent category specified doesn't actually exist!",
+      );
+    return this.marketCategoryRepository.save(
+      this.marketCategoryRepository.create({
+        name,
+        description,
+        parentId,
+        icon: iconUrl,
+      }),
+    );
+  }
+
+  async updateCategoryData(
+    id: number,
+    updatedFieldsData: UpdatePredictionMarketCategoryDto,
+  ) {
+    const category = await this.getCategory(id);
+    if (!category) throw new NotFoundException('No such category!');
+    if (
+      updatedFieldsData.name?.length &&
+      (await this.marketCategoryRepository.findOneBy({
+        name: ILike(updatedFieldsData.name),
+      }))
+    )
+      throw new ConflictException(
+        'A category with this new name exists already.',
+      );
+    if (
+      updatedFieldsData.parentId != null &&
+      !(await this.doesCategoryExist(updatedFieldsData.parentId))
+    )
+      throw new NotFoundException(
+        "The parent category specified doesn't actually exist!",
+      );
+    Object.assign(category, updatedFieldsData);
+    return this.marketCategoryRepository.save(category);
+  }
+
+  async deleteCategory(id: number) {
+    const category = await this.getCategory(id);
+    if (!category) throw new NotFoundException('No such category!');
+    return this.marketCategoryRepository.remove(category);
   }
 
   async createNewMarket(
@@ -90,16 +235,20 @@ export class PredictionMarketService {
     categoryId?: number,
     subject?: string,
   ) {
-    const chainId = await this.blockchainService.getCurrentChainId();
+    if (await this.isQuestionRepetitive(question))
+      throw new ConflictException('This question has been asked previously!');
+
+    const chainId =
+      await this.predictionMarketContractsService.getCurrentChainId();
     const [predictionOutcomes, marketMaker, oracle] = await Promise.all([
       this.getPredictionOutcomes(outcomes),
-      this.blockchainService.getDefaultMarketMaker(chainId),
-      this.getDefaultOracle(chainId),
+      this.predictionMarketContractsService.getDefaultMarketMaker(chainId),
+      this.getDefaultOracle(),
     ]);
 
     const formattedQuestion = this.formatQuestionText(question);
 
-    const result = await this.blockchainService.createMarket(
+    const result = await this.predictionMarketContractsService.createMarket(
       marketMaker,
       CryptoTokenEnum.WETH9,
       formattedQuestion,
@@ -110,7 +259,7 @@ export class PredictionMarketService {
     );
 
     if (
-      !(await this.blockchainService.validateMarketCreation(
+      !(await this.predictionMarketContractsService.validateMarketCreation(
         result.conditionId,
         outcomes.length,
       ))
@@ -119,7 +268,7 @@ export class PredictionMarketService {
         'Something failed while creating market in the blockchain.',
       );
 
-    if (categoryId && !(await this.findCategoryById(categoryId)))
+    if (categoryId && !(await this.getCategory(categoryId)))
       throw new BadRequestException('No such category!');
 
     const market = await this.predictionMarketRepository.save(
@@ -127,15 +276,14 @@ export class PredictionMarketService {
         type: result.marketMakerFactory.type,
         conditionId: result.conditionId,
         address: result.marketMakerAddress,
-        question: result.question,
-        formattedQuestion,
-        questionHash: result.questionHash,
+        question,
+        formattedQuestion: result.question,
+        questionId: result.questionId,
         ammFactoryId: result.marketMakerFactory.id,
         oracleId: result.oracle.id,
         chainId: result.chainId,
         collateralTokenId: result.collateralToken.id,
         initialLiquidity: result.liquidity,
-        liquidity: result.liquidity,
         creatorId: result.creatorId,
         createMarketTxHash: result.createMarketTxHash,
         prepareConditionTxHash: result.prepareConditionTxHash,
@@ -146,22 +294,33 @@ export class PredictionMarketService {
       }),
     );
 
-    const conditionalTokens: ConditionalToken[] = Array(outcomes.length);
-    for (let i = 0; i < outcomes.length; i++) {
-      const collectionId = await this.blockchainService.getCollectionId(
-        market.conditionId,
-        i,
-      );
-      conditionalTokens[i] = this.conditionalTokenRepository.create({
-        collectionId,
-        marketId: market.id,
-        predictionOutcomeId: predictionOutcomes[i].id,
-        tokenIndex: i,
-      });
-    }
-    await this.conditionalTokenRepository.save(conditionalTokens);
+    const conditionalTokens = await Promise.all(
+      predictionOutcomes.map((outcome, i) =>
+        this.createConditionalToken(market, i, outcome),
+      ),
+    );
+    await Promise.all([
+      this.conditionalTokenRepository.save(conditionalTokens),
+      this.createAllCollections(market, predictionOutcomes),
+    ]);
+  }
 
-    await this.createAllCollections(market, predictionOutcomes); // TODO: You should select one approach: Using ConditionalToken || OutcomeCollection entity,
+  async createConditionalToken(
+    market: PredictionMarket,
+    tokenIndex: number,
+    relatedPredictionOutcome: PredictionOutcome,
+  ) {
+    const collectionId =
+      await this.predictionMarketContractsService.getCollectionId(
+        market.conditionId,
+        tokenIndex,
+      );
+    return this.conditionalTokenRepository.create({
+      collectionId,
+      marketId: market.id,
+      predictionOutcomeId: relatedPredictionOutcome.id,
+      tokenIndex,
+    });
   }
 
   async createAllCollections(
@@ -169,13 +328,15 @@ export class PredictionMarketService {
     outcomes: PredictionOutcome[],
   ) {
     const numberOfCollections =
-      this.blockchainService.getNumberOfOutcomeCollections(outcomes.length);
+      this.predictionMarketContractsService.getNumberOfOutcomeCollections(
+        outcomes.length,
+      );
     const collections = (
       await Promise.all(
         Array(numberOfCollections)
           .fill(null)
           .map((_, i) =>
-            this.blockchainService.getCollectionIdByIndexSetValue(
+            this.predictionMarketContractsService.getCollectionIdByIndexSetValue(
               market.conditionId,
               i,
             ),
@@ -198,10 +359,6 @@ export class PredictionMarketService {
       outcomeSet.push(outcomes[i]);
     }
     return this.outcomeCollectionRepository.save(collections);
-  }
-
-  resolveMarket() {
-    // TODO:
   }
 
   async findMarkets(
@@ -236,7 +393,32 @@ export class PredictionMarketService {
       ...(relations ? { relations } : {}),
     });
 
-    if (!market) throw new NotFoundException('No such market!');
+    if (!market) throw new NotFoundException('Market not found!');
+    return market;
+  }
+
+  async getMarketByAddress(
+    address: string,
+    {
+      relations,
+      outcomeTokensOrder = null,
+      shouldThrow = true,
+    }: {
+      relations?: string[];
+      shouldThrow?: boolean;
+      outcomeTokensOrder?: FindOptionsOrder<ConditionalToken>;
+    } = {},
+  ) {
+    const market = await this.predictionMarketRepository.findOne({
+      where: { address },
+      ...(relations ? { relations } : {}),
+      ...(outcomeTokensOrder
+        ? { order: { outcomeTokens: outcomeTokensOrder } }
+        : {}),
+    });
+
+    if (!market && shouldThrow)
+      throw new NotFoundException('Market not found!');
     return market;
   }
 
@@ -258,14 +440,18 @@ export class PredictionMarketService {
     outcomeIndex: number;
   }) {
     const market = await this.getMarket(marketId, 'ammFactory'); // Also collateral token which is set 'eager', if you intend to disable the eager option, you should add it here.
-    if (!market) throw new NotFoundException('No such market!');
     if (market.closedAt)
       throw new BadRequestException('This market is closed!');
     if (outcomeIndex >= market.numberOfOutcomes)
       throw new BadRequestException('You have selected an invalid outcome.');
 
-    // TODO: Also check some other important checks
-    return this.blockchainService.trade(traderId, market, outcomeIndex, amount);
+    // TODO: Blockchain errors may seem to complicated, add some balance and other checks here to show the proper message in case.
+    return this.predictionMarketContractsService.trade(
+      traderId,
+      market,
+      outcomeIndex,
+      amount,
+    );
   }
 
   async getConditionalTokenBalance(
@@ -274,11 +460,9 @@ export class PredictionMarketService {
     indexSet: number,
   ) {
     const market = await this.getMarket(marketId);
-    if (!market) throw new NotFoundException('Market not found!');
     if (indexSet >= market.numberOfOutcomes)
-      // TODO: If you want to use all different collections, this check condition must change
       throw new BadRequestException('This market does not have such outcome!');
-    return this.blockchainService.getUserConditionalTokenBalance(
+    return this.predictionMarketContractsService.getUserConditionalTokenBalance(
       user.id,
       market,
       indexSet,
@@ -287,10 +471,9 @@ export class PredictionMarketService {
 
   async getMarketLiquidity(marketId: number) {
     const market = await this.getMarket(marketId, 'outcomeTokens');
-    if (!market) throw new NotFoundException('Market not found!');
     const balances = await Promise.all(
       market.outcomeTokens.map((token) =>
-        this.blockchainService.getMarketConditionalTokenBalance(
+        this.predictionMarketContractsService.getMarketConditionalTokenBalance(
           market,
           token.tokenIndex,
         ),
@@ -298,6 +481,7 @@ export class PredictionMarketService {
     );
     return market.outcomeTokens.map((token, i) => ({
       outcome: token.predictionOutcome.title,
+      index: token.tokenIndex,
       balance: balances[i],
       token,
     }));
@@ -307,7 +491,7 @@ export class PredictionMarketService {
     const market = await this.getMarket(marketId, 'outcomeTokens');
     const balances = await Promise.all(
       market.outcomeTokens.map((token) =>
-        this.blockchainService.getUserConditionalTokenBalance(
+        this.predictionMarketContractsService.getUserConditionalTokenBalance(
           userId,
           market,
           token.tokenIndex,
@@ -316,21 +500,52 @@ export class PredictionMarketService {
     );
     return market.outcomeTokens.map((token, i) => ({
       outcome: token.predictionOutcome.title,
+      index: token.tokenIndex,
       balance: balances[i],
       token,
     }));
   }
 
-  async getMarketOutcomesMarginalPrices(marketId: number) {
+  async getUserBalanceOfMarketCollateralToken(
+    userId: number,
+    marketId: number,
+  ) {
+    const market = await this.getMarket(marketId);
+    return this.blockchainWalletService.getBalance(
+      userId,
+      market.collateralToken,
+      market.chainId,
+    );
+  }
+
+  async getAllOutcomesPrices(marketId: number) {
     const market = await this.getMarket(
       marketId,
       'ammFactory',
       'outcomeTokens',
     );
-    if (!market) throw new NotFoundException('Market not found!');
+    return this.predictionMarketContractsService.getMarketAllOutcomePrices(
+      market,
+    );
+  }
+
+  async getSingleOutcomePrice(marketId: number, outcomeIndex: number) {
+    const market = await this.getMarket(marketId, 'ammFactory');
+    return this.predictionMarketContractsService.getMarketOutcomePrice(
+      market,
+      outcomeIndex,
+    );
+  }
+
+  async getAllOutcomesMarginalPrices(marketId: number) {
+    const market = await this.getMarket(
+      marketId,
+      'ammFactory',
+      'outcomeTokens',
+    );
     const prices = await Promise.all(
       market.outcomeTokens.map((token) =>
-        this.blockchainService.getOutcomeTokenMarginalPrices(
+        this.predictionMarketContractsService.getOutcomeTokenMarginalPrices(
           market,
           token.tokenIndex,
         ),
@@ -338,20 +553,17 @@ export class PredictionMarketService {
     );
     return market.outcomeTokens.map((token, i) => ({
       outcome: token.predictionOutcome.title,
+      index: token.tokenIndex,
       price: prices[i],
       token,
     }));
   }
 
-  async getConditionalTokenMarginalPrices(
-    marketId: number,
-    outcomeIndex: number,
-  ) {
+  async getSingleOutcomeMarginalPrice(marketId: number, outcomeIndex: number) {
     const market = await this.getMarket(marketId, 'ammFactory');
-    if (!market) throw new NotFoundException('Market not found!');
     if (outcomeIndex >= market.numberOfOutcomes)
       throw new BadRequestException('This market does not have such outcome!');
-    return this.blockchainService.getOutcomeTokenMarginalPrices(
+    return this.predictionMarketContractsService.getOutcomeTokenMarginalPrices(
       market,
       outcomeIndex,
     );
@@ -362,7 +574,7 @@ export class PredictionMarketService {
       where: {
         closedAt: null,
         ...(onlyPassedDue
-          ? { shouldResolveAt: MoreThanOrEqual(new Date()) }
+          ? { shouldResolveAt: LessThanOrEqual(new Date()) }
           : {}),
       },
       ...(relations?.length ? { relations } : {}),
@@ -370,29 +582,172 @@ export class PredictionMarketService {
   }
 
   async closeMarket(market: PredictionMarket) {
-    await this.blockchainService.closeMarket(market);
-    await this.updateMarketData(market.id, { closedAt: new Date() }); // TODO: maybe its better to add another field called closed?
+    await this.predictionMarketContractsService.closeMarket(market);
+    await this.updateMarketData(market.id, { closedAt: new Date() });
   }
 
-  async finalizedMarket(market: PredictionMarket) {
-    // TODO: Steps
+  async finalizeMarket(market: PredictionMarket) {
     await this.closeMarket(market);
-    // Step 2: Resolve market by oracle, and specify market answer and payout array
-    // Step 3: Redeem rewards (positions)
-    // Step 4: Save everything in database.
+    // TODO: Decentralized oracle implementation ...
   }
 
   async forceCloseMarket(performer: User, marketId: number) {
     const market = await this.getMarket(marketId, 'ammFactory');
-    if (!market) throw new NotFoundException('No such market!');
     if (market.closedAt)
       throw new BadRequestException('This market is already closed!');
     if (market.creatorId !== performer.id)
       throw new ForbiddenException(
         'Markets can only force close by their creator.',
       );
-    // TODO: Also get the PayoutVector from Post request to force resolve the market.
-    return this.finalizedMarket(market);
+    return this.finalizeMarket(market);
+  }
+
+  async manualResolve(
+    user: User,
+    marketId: number,
+    marketAnswer: number | number[],
+    forceClose: boolean = false,
+  ) {
+    const market = await this.getMarket(marketId, 'outcomeTokens', 'oracle');
+    if (market.oracle.type !== OracleTypesEnum.CENTRALIZED.toString())
+      throw new MethodNotAllowedException(
+        'This action is only allowed on markets with centralized oracles.',
+      );
+    try {
+      if (
+        market.oracle.account.userId !== user.id ||
+        market.oracle.account.address !==
+          (await this.blockchainWalletService.getWallet(user.id, true))?.address
+      )
+        throw new ForbiddenException();
+    } catch (ex) {
+      // since blockchainWalletService may throw NotFound exception, this way the error message will still be related to the request.
+      throw new ForbiddenException(
+        "You're not allowed to do this since you're not this market's oracle.",
+      );
+    }
+
+    if (market.isOpen) {
+      if (!forceClose || !user.admin) {
+        throw new BadRequestException(
+          'Market is not closed yet! This action is only available after market closes.',
+        );
+      }
+      await this.closeMarket(market);
+    }
+
+    if (!(marketAnswer instanceof Array)) {
+      marketAnswer = Array(market.numberOfOutcomes)
+        .fill(0)
+        .map((_, i) => (i === marketAnswer ? 1 : 0));
+    }
+
+    const _result = await this.predictionMarketContractsService.resolveMarket(
+      market,
+      marketAnswer,
+    );
+  }
+
+  async updateParticipationStatistics(
+    market: PredictionMarket,
+    { tokenAmounts }: PredictionMarketTradeDataType,
+  ) {
+    if (tokenAmounts.length !== market.outcomeTokens.length)
+      throw new Error(
+        "Invalid event log decoding, trade data doesn't match market info.",
+      );
+    // Note: outcomeTokens field must be ordered by tokenIndex
+    for (let i = 0; i < tokenAmounts.length; i++) {
+      const amountInEth = (
+        await this.blockchainWalletService.weiToEthers(
+          tokenAmounts[i],
+          market.collateralToken,
+        )
+      ).toNumber(); // TODO/Check: Use Number or BigInt for amountInvested?
+      market.outcomeTokens[i].amountInvested += amountInEth;
+    }
+
+    await Promise.all([
+      this.conditionalTokenRepository.save(market.outcomeTokens),
+      this.predictionMarketRepository.save(market),
+    ]);
+  }
+
+  async getMarketParticipationStatistics(marketId: number) {
+    const market = await this.getMarket(marketId, 'outcomeTokens');
+    let totalInvestment = 0;
+    market.outcomeTokens.forEach((token) => {
+      totalInvestment += token.amountInvested;
+    });
+    return market.outcomeTokens.map((token) => ({
+      outcome: token.predictionOutcome.title,
+      index: token.tokenIndex,
+      participationPossibility: (100 * token.amountInvested) / totalInvestment,
+      token,
+    }));
+  }
+
+  async setMarketResolutionData(
+    resolutionData: PredictionMarketResolutionDataType,
+  ) {
+    const market = await this.findByQuestionId(resolutionData.questionId, {
+      conditionId: resolutionData.conditionId,
+      relations: ['outcomeTokens'],
+      order: {
+        outcomeTokens: { tokenIndex: 'ASC' },
+      },
+    });
+    if (!market) throw new Error('No such market!');
+    if (market.isOpen)
+      throw new Error(
+        `A ConditionResolution event has been fired in blockchain, for market#${market.id} which is still open! It seems something has gone wrong!`,
+      );
+    market.resolvedAt = new Date();
+
+    // Note: market.outcomeTokens must be sorted by tokenIndex to prevent any possible position mismatch
+    let sumOfRatios = 0;
+    resolutionData.payoutNumerators.forEach((ratio) => {
+      sumOfRatios += ratio;
+    });
+
+    for (let i = 0; i < market.outcomeTokens.length; i++) {
+      market.outcomeTokens[i].truenessRatio =
+        resolutionData.payoutNumerators[i] / sumOfRatios;
+    }
+
+    await Promise.all([
+      this.conditionalTokenRepository.save(market.outcomeTokens),
+      this.predictionMarketRepository.save(market),
+    ]);
+
+    this.loggerService.debug(`Market#${market.id} has been resolved.`, {
+      data: {
+        market: {
+          id: market.id,
+          question: market.question,
+          outcomes: market.outcomeDetails,
+          resolutionData,
+        },
+      },
+    });
+  }
+
+  async redeemUserRewards(user: User, marketId: number) {
+    const market = await this.getMarket(marketId, 'outcomeTokens');
+    if (!market.closedAt)
+      throw new ForbiddenException(
+        'Market is still open, this action will be only available after the market is resolved.',
+      );
+    if (!market.resolvedAt)
+      throw new ForbiddenException(
+        'Although market is closed, oracle has not resolved and released results yet; When resolved, you can come back and collect your rewards.',
+      );
+    const result =
+      await this.predictionMarketContractsService.redeemMarketRewards(
+        user.id,
+        market,
+      );
+    return result;
   }
 
   @Cron(CronExpression.EVERY_HOUR)
@@ -403,7 +758,7 @@ export class PredictionMarketService {
     );
     await Promise.all(
       shouldBeResolvedMarkets.map((market: PredictionMarket) =>
-        this.finalizedMarket(market),
+        this.finalizeMarket(market),
       ),
     );
   }

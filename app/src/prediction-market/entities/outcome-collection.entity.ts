@@ -12,7 +12,6 @@ import { PredictionOutcome } from './outcome.entity';
 
 @Entity('outcome_collection')
 export class OutcomeCollection extends BaseEntity {
-  //TODO: THINK: We should use this or ConditionalTokens?
   @Column({ name: 'market_id', type: 'integer' })
   marketId: number;
 

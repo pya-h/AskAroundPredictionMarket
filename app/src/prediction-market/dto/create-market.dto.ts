@@ -3,6 +3,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsDate,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -30,11 +31,10 @@ export class CreatePredictionMarketDto {
   @ApiProperty({
     description:
       'The category of the market, specifying which topic is market question about. null means General',
-    default: null,
   })
-  //   @IsNotEmpty({ message: 'The id of the market question category.' })
-  @IsOptional() // TODO: If the categoryId field of the market table becomes Required, this must change too.
-  @IsNumber()
+  @IsNotEmpty({ message: 'The id of the market question category.' })
+  @IsInt({ message: 'Category Id must be a positive integer!' })
+  @IsPositive({ message: 'Category Id must be a positive integer!' })
   categoryId: number;
 
   @ApiProperty({

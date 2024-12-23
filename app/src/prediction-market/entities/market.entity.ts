@@ -1,13 +1,13 @@
 import { BaseEntity } from '../../core/base.entity';
 import { Column, Entity, JoinColumn, ManyToOne, OneToMany } from 'typeorm';
 import { ConditionalToken } from './conditional-token.entity';
-import { CryptocurrencyToken } from '../../blockchain/entities/cryptocurrency-token.entity';
+import { CryptocurrencyToken } from '../../blockchain-wallet/entities/cryptocurrency-token.entity';
 import { Oracle } from './oracle.entity';
-import { MarketMakerFactory } from '../../blockchain/entities/market-maker-factory.entity';
-import { Chain } from '../../blockchain/entities/chain.entity';
+import { MarketMakerFactory } from '../../prediction-market-contracts/entities/market-maker-factory.entity';
+import { Chain } from '../../blockchain-wallet/entities/chain.entity';
 import { MarketCategory } from './market-category.entity';
 import { User } from '../../user/entities/user.entity';
-import { PredictionMarketTypesEnum } from '../../blockchain/enums/market-types.enum';
+import { PredictionMarketTypesEnum } from '../../prediction-market-contracts/enums/market-types.enum';
 
 @Entity('prediction_market')
 export class PredictionMarket extends BaseEntity {
@@ -51,13 +51,12 @@ export class PredictionMarket extends BaseEntity {
   @JoinColumn({ name: 'chain_id' })
   chain: Chain;
 
-  @Column({ name: 'category_id', nullable: true })
-  categoryId: number | null; // TODO: null as a 'General' category, and leave this column nullable,
-  // or Add a General Category via migrations and prevent this to be nullable. [Second one seems more logical]
+  @Column({ name: 'category_id', nullable: false })
+  categoryId: number;
 
   @ManyToOne(() => MarketCategory)
   @JoinColumn({ name: 'category_id' })
-  category: MarketCategory | null;
+  category: MarketCategory;
 
   @Column({ type: 'varchar', length: 1024 })
   question: string;
@@ -70,8 +69,8 @@ export class PredictionMarket extends BaseEntity {
   })
   formattedQuestion: string;
 
-  @Column({ name: 'question_hash' })
-  questionHash: string;
+  @Column({ name: 'question_id' })
+  questionId: string;
 
   @Column({ name: 'subject', nullable: true, default: null })
   subject: string | null; // This is actually a short name for the market, useful when listing markets to prevent the list being too wide.
@@ -82,14 +81,11 @@ export class PredictionMarket extends BaseEntity {
   @Column({ name: 'closed_at', nullable: true, default: null })
   closedAt: Date;
 
-  @Column({ name: 'finalized_at', nullable: true, default: null })
-  finalizedAt: Date;
+  @Column({ name: 'resolved_at', nullable: true, default: null })
+  resolvedAt: Date;
 
   @Column({ name: 'initial_liquidity', type: 'decimal' })
   initialLiquidity: number;
-
-  @Column({ type: 'decimal' })
-  liquidity: number;
 
   @Column({ name: 'collateral_token_id' })
   collateralTokenId: number;
@@ -116,4 +112,24 @@ export class PredictionMarket extends BaseEntity {
 
   @OneToMany(() => ConditionalToken, (outcomeToken) => outcomeToken.market)
   outcomeTokens: ConditionalToken[];
+
+  get isOpen() {
+    return !this.closedAt;
+  }
+
+  get isResolved() {
+    return Boolean(this.resolvedAt);
+  }
+
+  get outcomeDetails() {
+    if (!this.outcomeTokens?.length) return null;
+    return this.outcomeTokens.map((token) => ({
+      outcome: token.predictionOutcome.title,
+      index: token.tokenIndex,
+      investment: token.amountInvested,
+      collectionId: token.collectionId,
+      ...(this.isResolved ? { truenessRatio: token.truenessRatio } : {}),
+      icon: token.predictionOutcome.icon,
+    }));
+  }
 }
