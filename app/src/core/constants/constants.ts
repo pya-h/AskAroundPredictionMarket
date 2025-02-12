@@ -9,3 +9,7 @@ export enum OracleConstants {
 export enum ContractEntityConstants {
   CONDITIONAL_TOKEN_CONTRACT_ID = 0,
 }
+
+export enum MarketEconomicConstants {
+  TRADE_SLIPPAGE = 0.0,
+}

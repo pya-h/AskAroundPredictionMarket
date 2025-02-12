@@ -1,10 +1,16 @@
 import { ApiPropertyOptional, OmitType } from '@nestjs/swagger';
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsPositive,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { CreatePredictionMarketCategoryDto } from './create-category.dto';
 
 export class UpdatePredictionMarketCategoryDto extends OmitType(
   CreatePredictionMarketCategoryDto,
-  ['name'],
+  ['name', 'parentId'],
 ) {
   @ApiPropertyOptional({
     description: 'Category Name',
@@ -16,4 +22,18 @@ export class UpdatePredictionMarketCategoryDto extends OmitType(
   })
   @IsOptional()
   name?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'The new parent id of this category; Set this to null if you intend to convert the category to a primary one.',
+    default: undefined,
+  })
+  @IsOptional()
+  @IsInt({
+    message: 'Id of the new parent category must be a positive integer.',
+  })
+  @IsPositive({
+    message: 'Id of the new parent category must be a positive integer.',
+  })
+  parentId?: number;
 }

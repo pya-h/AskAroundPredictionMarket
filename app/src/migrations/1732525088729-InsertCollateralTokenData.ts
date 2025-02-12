@@ -1,6 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 import { ConfigService } from '../config/config.service';
-import { CryptoTokenEnum } from '../prediction-market-contracts/enums/crypto-token.enum';
+import { CryptoTokenEnum } from '../blockchain-core/enums/crypto-token.enum';
 
 const configService = new ConfigService();
 

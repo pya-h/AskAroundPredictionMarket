@@ -26,8 +26,13 @@ export class UserService {
     return this.userRepository.save({ username, password, email });
   }
 
-  findOne(id: number) {
-    if (!id) return null;
+  findOne(id: number, shouldThrow: boolean = false) {
+    if (!id) {
+      if (shouldThrow) {
+        throw new NotFoundException('User not found!');
+      }
+      return null;
+    }
     return this.userRepository.findOneBy({ id });
   }
 
@@ -54,12 +59,15 @@ export class UserService {
 
   async removeById(id: number) {
     // Other approach is using delete. That does the job directly but as mentioned in update section about .update,
-    // this delete method doesnt run Hooks too.
+    // this delete method doesn't run Hooks too.
     const user = await this.findOne(id);
     if (!user) {
       throw new NotFoundException('User not found.');
     }
 
     return this.userRepository.remove(user); // remove & save and maybe run some hooks
+  }
+  getUsersCount() {
+    return this.userRepository.count();
   }
 }

@@ -1,5 +1,11 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsInt, IsNotEmpty, IsNumber, IsPositive } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsPositive,
+} from 'class-validator';
 
 export class TradeConditionalTokenDto {
   @ApiProperty({
@@ -18,11 +24,21 @@ export class TradeConditionalTokenDto {
   @IsInt({ message: 'Outcome index must be an integer.' })
   outcomeIndex: number;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Amount of this outcome token user intends to trade.',
     default: 1.0,
   })
+  @IsOptional()
   @IsNumber()
   @IsPositive({ message: 'The amount of token must be positive.' })
-  amount: number;
+  amount?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Amount of collateral token user tends to pay to receive equivalent amount of this outcome.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @IsPositive({ message: 'The payment amount must be positive.' })
+  payment?: number;
 }

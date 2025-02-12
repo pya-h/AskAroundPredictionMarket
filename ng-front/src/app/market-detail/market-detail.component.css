@@ -1,0 +1,72 @@
+
+.market-detail {
+  padding: 20px;
+  max-width: 800px;
+  margin: 0 auto;
+  background-color: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  margin-top: 5%;
+}
+
+.market-detail h2 {
+  text-align: center;
+  margin-bottom: 20px;
+  font-size: 24px;
+}
+
+.outcomes {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.outcomes li {
+  flex: 1;
+  padding: 10px;
+  background-color: #ffffff;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.outcomes li .action-buttons {
+  display: flex;
+  justify-content: space-between;
+}
+
+.outcomes li .outcome-details {
+  font-size: 14px;
+  color: #6c757d;
+  margin-top: 10px;
+}
+
+
+.outcomes li span {
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.modal {
+  background-color: rgba(0, 0, 0, 0.5);
+}
+
+.modal .modal-dialog {
+  margin: 100px auto;
+  max-width: 500px;
+}
+
+.modal .modal-content {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+
+.modal.show {
+  display: block;
+  background: rgba(0, 0, 0, 0.5);
+}

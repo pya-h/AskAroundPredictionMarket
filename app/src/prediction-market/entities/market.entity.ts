@@ -1,66 +1,33 @@
-import { BaseEntity } from '../../core/base.entity';
-import { Column, Entity, JoinColumn, ManyToOne, OneToMany } from 'typeorm';
+import { Column, Entity, OneToMany } from 'typeorm';
 import { ConditionalToken } from './conditional-token.entity';
-import { CryptocurrencyToken } from '../../blockchain-wallet/entities/cryptocurrency-token.entity';
-import { Oracle } from './oracle.entity';
-import { MarketMakerFactory } from '../../prediction-market-contracts/entities/market-maker-factory.entity';
-import { Chain } from '../../blockchain-wallet/entities/chain.entity';
-import { MarketCategory } from './market-category.entity';
-import { User } from '../../user/entities/user.entity';
-import { PredictionMarketTypesEnum } from '../../prediction-market-contracts/enums/market-types.enum';
+import { ApiProperty } from '@nestjs/swagger';
+import { OutcomeStatistics } from '../dto/responses/prediction-market-extra.dto';
+import { PredictionMarketStatusEnum } from '../enums/market-status.enum';
+import { BasePredictionMarket } from './bases/base-market.entity';
 
 @Entity('prediction_market')
-export class PredictionMarket extends BaseEntity {
-  @Column({
-    type: 'varchar',
-    length: 16,
-    default: PredictionMarketTypesEnum.LMSR.toString(),
-    enum: PredictionMarketTypesEnum,
-    enumName: 'PredictionMarketTypesEnum',
+export class PredictionMarket extends BasePredictionMarket {
+  @ApiProperty({
+    type: 'string',
+    example:
+      '0x9355a7ec078d2451ee9584a25069dafa72cb184ae93c0f22cab73e13ac50300d',
   })
-  type: string;
-
-  @Column({
-    name: 'creator_id',
-    type: 'integer',
-    nullable: false,
-  })
-  creatorId: number;
-
-  @ManyToOne(() => User, { onDelete: 'NO ACTION' })
-  @JoinColumn({ name: 'creator_id' })
-  creator: User;
-
   @Column({ name: 'condition_id' })
   conditionId: string;
 
+  @ApiProperty({
+    type: 'string',
+    example: '0x8EfE59F7e2ACEC5Ccc1ebB6b5126d6407b7C33Bf',
+  })
   @Column({ name: 'address' })
   address: string;
 
-  @Column({ name: 'oracle_id' })
-  oracleId: number;
-
-  @ManyToOne(() => Oracle, { onDelete: 'NO ACTION' })
-  @JoinColumn({ name: 'oracle_id' })
-  oracle: Oracle;
-
-  @Column({ name: 'chain_id' })
-  chainId: number;
-
-  @ManyToOne(() => Chain, { onDelete: 'NO ACTION' })
-  @JoinColumn({ name: 'chain_id' })
-  chain: Chain;
-
-  @Column({ name: 'category_id', nullable: false })
-  categoryId: number;
-
-  @ManyToOne(() => MarketCategory)
-  @JoinColumn({ name: 'category_id' })
-  category: MarketCategory;
-
-  @Column({ type: 'varchar', length: 1024 })
-  question: string;
-
+  @ApiProperty({
+    type: 'string',
+    example: '1736686063403-Will it rain tomorrow?',
+    description:
+      'This is the actual question which will be hashed, then provided to contract, to make sure it does not conflict with other question texts.',
+  })
   @Column({
     name: 'formatted_question',
     unique: true,
@@ -69,47 +36,65 @@ export class PredictionMarket extends BaseEntity {
   })
   formattedQuestion: string;
 
+  @ApiProperty({
+    type: 'string',
+    example:
+      '0x27c7e8a174c1eae60035d002443c16a702a9b413206035b67def07548ab5aa0d',
+    description:
+      'Hashed formattedQuestion, The identifier of this Condition on the blockchain',
+  })
   @Column({ name: 'question_id' })
   questionId: string;
 
-  @Column({ name: 'subject', nullable: true, default: null })
-  subject: string | null; // This is actually a short name for the market, useful when listing markets to prevent the list being too wide.
+  @ApiProperty({
+    type: Date,
+    description: 'The actual date market has been started.',
+  })
+  @Column({
+    name: 'started_at',
+    nullable: true,
+    default: null,
+  })
+  startedAt: Date;
 
-  @Column({ name: 'should_resolve_at' })
-  shouldResolveAt: Date;
-
+  @ApiProperty({
+    type: Date,
+    description: 'The exact date when market is closed on blockchain.',
+  })
   @Column({ name: 'closed_at', nullable: true, default: null })
   closedAt: Date;
 
+  @ApiProperty({
+    type: Date,
+    description:
+      'The date which Oracle completed the resolution process and specified Outcomes trueness ratios.',
+  })
   @Column({ name: 'resolved_at', nullable: true, default: null })
   resolvedAt: Date;
 
-  @Column({ name: 'initial_liquidity', type: 'decimal' })
-  initialLiquidity: number;
-
-  @Column({ name: 'collateral_token_id' })
-  collateralTokenId: number;
-
-  @ManyToOne(() => CryptocurrencyToken, { eager: true, onDelete: 'NO ACTION' })
-  @JoinColumn({ name: 'collateral_token_id' })
-  collateralToken: CryptocurrencyToken;
-
-  @Column({ name: 'amm_factory_id' })
-  ammFactoryId: number;
-
-  @ManyToOne(() => MarketMakerFactory, { onDelete: 'NO ACTION' })
-  @JoinColumn({ name: 'amm_factory_id' })
-  ammFactory: MarketMakerFactory;
-
+  @ApiProperty({
+    type: 'string',
+    example:
+      '0xb2919b62ba9579281e2d42eac029e4f76bec1a7a9c5b7e29c29b45ef0c9ab0e9',
+    description: "Hash of the transaction which has created market's outcomes.",
+  })
   @Column({ name: 'prepare_condition_tx_hash' })
   prepareConditionTxHash: string;
 
+  @ApiProperty({
+    type: 'string',
+    example:
+      '0xb2919b62ba9579281e2d42eac029e4f76bec1a7a9c5b7e29c29b45ef0c9ab0e9',
+    description: 'Hash of the transaction which has created the market itself.',
+  })
   @Column({ name: 'create_market_tx_hash' })
   createMarketTxHash: string;
 
-  @Column({ name: 'num_of_outcomes', type: 'smallint', default: 2 })
-  numberOfOutcomes: number;
-
+  @ApiProperty({
+    type: ConditionalToken,
+    isArray: true,
+    description: "List of market's all outcomes & sub-outcomes.",
+  })
   @OneToMany(() => ConditionalToken, (outcomeToken) => outcomeToken.market)
   outcomeTokens: ConditionalToken[];
 
@@ -121,11 +106,39 @@ export class PredictionMarket extends BaseEntity {
     return Boolean(this.resolvedAt);
   }
 
-  get outcomeDetails() {
-    if (!this.outcomeTokens?.length) return null;
-    return this.outcomeTokens.map((token) => ({
+  static getStatus(market: PredictionMarket | Record<string, unknown>) {
+    if (!market.startedAt) {
+      return PredictionMarketStatusEnum.WAITING;
+    }
+    if (!market.closedAt) {
+      return PredictionMarketStatusEnum.ONGOING;
+    }
+    if (!market.resolvedAt) {
+      return PredictionMarketStatusEnum.CLOSED;
+    }
+    return PredictionMarketStatusEnum.RESOLVED;
+  }
+
+  get status(): PredictionMarketStatusEnum {
+    return PredictionMarket.getStatus(this);
+  }
+
+  get totalInvestment(): number {
+    let totalInvestment = 0;
+    this.outcomeTokens.forEach((token) => {
+      totalInvestment += token.amountInvested;
+    });
+    return totalInvestment;
+  }
+
+  get statistics(): OutcomeStatistics[] {
+    const { totalInvestment } = this;
+    return this.outcomeTokens?.map((token) => ({
+      id: token.id,
       outcome: token.predictionOutcome.title,
       index: token.tokenIndex,
+      participationPossibility:
+        (100.0 * token.amountInvested) / totalInvestment,
       investment: token.amountInvested,
       collectionId: token.collectionId,
       ...(this.isResolved ? { truenessRatio: token.truenessRatio } : {}),

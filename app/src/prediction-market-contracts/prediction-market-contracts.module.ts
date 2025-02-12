@@ -2,15 +2,15 @@ import { Module } from '@nestjs/common';
 import { PredictionMarketContractsService } from './prediction-market-contracts.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MarketMakerFactory } from './entities/market-maker-factory.entity';
-import { BlockchainWalletModule } from '../blockchain-wallet/blockchain-wallet.module';
-import { Contract } from 'ethers';
+import { BlockchainCoreModule } from '../blockchain-core/blockchain-core.module';
+import { LmsrMarketHelperService } from './helpers/lmsr-market-helper.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([MarketMakerFactory, Contract]),
-    BlockchainWalletModule,
+    TypeOrmModule.forFeature([MarketMakerFactory]),
+    BlockchainCoreModule,
   ],
-  providers: [PredictionMarketContractsService],
+  providers: [PredictionMarketContractsService, LmsrMarketHelperService],
   exports: [PredictionMarketContractsService],
 })
 export class PredictionMarketContractsModule {}

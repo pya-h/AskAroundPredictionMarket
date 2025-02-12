@@ -1,17 +1,26 @@
-import { Injectable, NotImplementedException } from '@nestjs/common';
+import {
+  Injectable,
+  LoggerService,
+  NotImplementedException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ethers } from 'ethers';
-import { Chain } from '../blockchain-wallet/entities/chain.entity';
-import { LoggerService } from '../logger/logger.service';
-import { PredictionMarketContractsService } from '../prediction-market-contracts/prediction-market-contracts.service';
+import { Chain } from '../blockchain-core/entities/chain.entity';
 import { tradeEventsData } from './abis/trade-events.abi';
 import { PredictionMarketService } from '../prediction-market/prediction-market.service';
 import { PredictionMarket } from '../prediction-market/entities/market.entity';
 import { PredictionMarketTypesEnum } from '../prediction-market-contracts/enums/market-types.enum';
-import { PredictionMarketTradeDataType } from './types/trade-data.type';
+import {
+  PredictionMarketTradeDataType,
+  tradeDataToJSON,
+} from './types/trade-data.type';
 import { resolutionEventData } from './abis/resolution-event.abi';
 import { ConditionTokenContractData } from '../prediction-market-contracts/abis/ctf.abi';
 import { PredictionMarketResolutionDataType } from './types/resolution-data.type';
-import { BlockchainWalletService } from 'src/blockchain-wallet/blockchain-wallet.service';
+import { BlockchainHelperService } from '../blockchain-core/blockchain-helper.service';
+import { WebSocket } from 'ws';
+import { payoutRedemptionEventData } from './abis/payout-redemption-event.abi';
+import { PayoutRedemptionEventDataType } from './types/payout-redemption-data.copy';
 
 type NetworkDataType = {
   provider: ethers.JsonRpcProvider;
@@ -19,21 +28,44 @@ type NetworkDataType = {
 };
 
 @Injectable()
-export class BlockchainIndexerService {
+export class BlockchainIndexerService implements OnModuleInit {
   private networks: Record<number, NetworkDataType> = {};
+  private websocketNetworks: Record<
+    number,
+    { connection: WebSocket; provider: ethers.WebSocketProvider }
+  > = {};
+
+  private ongoingTimeouts: NodeJS.Timeout[] = [];
 
   constructor(
     private readonly loggerService: LoggerService,
-    private readonly predictionMarketContractsService: PredictionMarketContractsService,
     private readonly predictionMarketService: PredictionMarketService,
-    private readonly blockchainWalletService: BlockchainWalletService,
-  ) {
-    this.loadNetworks().catch((err) =>
+    private readonly blockchainHelperService: BlockchainHelperService,
+  ) {}
+
+  async onModuleInit() {
+    try {
+      await Promise.all(
+        (await this.blockchainHelperService.findChains()).map(
+          async (chain: Chain) => {
+            this.networks[chain.id] = this.newHttpProvider(chain);
+            await this.setupWebSocketListener(this.networks[chain.id]);
+          },
+        ),
+      );
+    } catch (ex) {
       this.loggerService.error(
         'Failed to initialize blockchain indexer',
-        err as Error,
-      ),
-    );
+        ex as Error,
+      );
+    }
+  }
+
+  async restartIndexer() {
+    for (const timeout of this.ongoingTimeouts) clearTimeout(timeout);
+
+    await this.releaseNetworkInstances();
+    await this.onModuleInit();
   }
 
   newHttpProvider(chain: Chain) {
@@ -43,79 +75,180 @@ export class BlockchainIndexerService {
     };
   }
 
-  async loadNetworks() {
-    await Promise.all(
-      (await this.blockchainWalletService.findChains()).map(
-        async (chain: Chain) => {
-          this.networks[chain.id] = this.newHttpProvider(chain);
-          return this.setupWebSocketListener(this.networks[chain.id]);
-        },
-      ),
+  schedule(f: CallableFunction, due: number) {
+    // This is for keeping timeout ids, so when admin tries to restart indexer, server could remove all ongoing timeouts, o.w. it may cause crashes.
+    const timeout = setTimeout(async () => {
+      await f();
+      const idx = this.ongoingTimeouts.findIndex((id) => id == timeout);
+      if (idx !== -1) this.ongoingTimeouts.splice(idx, 1);
+    }, due * 1000);
+    this.ongoingTimeouts.push(timeout);
+  }
+
+  prepareToRetryRpcConnection(
+    network: NetworkDataType,
+    message: string,
+    { timeout = 10, err = null }: { timeout?: number; err?: Error } = {},
+  ) {
+    if (!network?.chain) return;
+    this.loggerService.error(
+      `Chain#${network.chain.id}[${network.chain.name}]: ${message}; retry in 10 seconds ...`,
+      err as Error,
     );
+    this.schedule(() => this.setupWebSocketListener(network), timeout);
+  }
+
+  async releaseWebsocketProvider(chainId: number | string) {
+    if (this.websocketNetworks?.[chainId]?.provider) {
+      await this.websocketNetworks[chainId].provider.destroy();
+      await this.websocketNetworks[chainId].provider.removeAllListeners();
+      this.websocketNetworks[chainId].provider = null;
+    }
+
+    if (this.websocketNetworks?.[chainId]?.connection) {
+      this.websocketNetworks[chainId].connection.close();
+      this.websocketNetworks[chainId].connection.removeEventListener(
+        'close',
+        () => {},
+      );
+      this.websocketNetworks[chainId].connection.removeEventListener(
+        'message',
+        () => {},
+      );
+      this.websocketNetworks[chainId].connection.removeEventListener(
+        'error',
+        () => {},
+      );
+    }
+    this.websocketNetworks[chainId] = null;
+  }
+
+  async releaseNetworkInstances() {
+    await Promise.all(
+      Object.keys(this.networks).map(async (chainId: string) => {
+        await Promise.all([
+          this.networks[chainId].provider.removeAllListeners(),
+          this.releaseWebsocketProvider(chainId),
+        ]);
+        this.networks[chainId].provider.destroy();
+        this.networks[chainId].provider = null;
+        this.networks[chainId].chain = null;
+      }),
+    );
+    this.networks = {};
   }
 
   async setupWebSocketListener(network: NetworkDataType) {
-    await this.checkoutChainLogs(network.chain.id); // To ensures all logs before this are processed [on server restart or websocket disconnection.]
+    await Promise.all([
+      this.releaseWebsocketProvider(network.chain.id),
+      await this.checkoutChainLogs(network.chain.id),
+    ]); // Ensures all logs before this are processed [on server restart or websocket disconnection.],
+    // and also all previous websocket connection and listeners are released, to prevent multiple listeners remain open
 
-    const websocket = new WebSocket(network.chain.webSocketRpcUrl);
-    const wsProvider = new ethers.WebSocketProvider(websocket);
+    try {
+      const websocket: WebSocket = new WebSocket(network.chain.webSocketRpcUrl);
 
-    wsProvider.on(
-      {
-        topics: [Object.values(tradeEventsData.signatures)],
-      },
-      async (log: ethers.Log) => {
-        try {
-          await this.processTradeEventLog(wsProvider, log);
-          await this.updateChainBlockOffset(
-            network.chain,
-            BigInt(log.blockNumber + 1),
-          );
-        } catch (error) {
-          this.loggerService.error(
-            'Failed to process WebSocket event log',
-            error,
-            {
-              data: { eventType: 'trade', log },
-            },
-          );
-        }
-      },
-    );
+      const provider = new ethers.WebSocketProvider(websocket);
+      this.websocketNetworks[network.chain.id] = {
+        connection: websocket,
+        provider,
+      };
 
-    wsProvider.on(
-      {
-        topics: [[resolutionEventData.signature]],
-      },
-      async (log: ethers.Log) => {
-        try {
-          await this.processResolveEvent(wsProvider, log);
-          await this.updateChainBlockOffset(
-            network.chain,
-            BigInt(log.blockNumber + 1),
-          );
-        } catch (error) {
-          this.loggerService.error(
-            'Failed to process WebSocket event log',
-            error,
-            {
-              data: { eventType: 'resolve', log },
-            },
-          );
-        }
-      },
-    );
-
-    websocket.addEventListener('close', async () => {
-      this.loggerService.error(
-        `WebSocket disconnected for chainId: ${network.chain.id}; scheduling reconnect...`,
+      websocket.addEventListener('open', () =>
+        this.loggerService.debug(
+          `Chain#${network.chain.id}: Listeners and Indexer all successfully set up.`,
+        ),
       );
-      setTimeout(() => this.setupWebSocketListener(network), 10000);
-    });
 
-    this.loggerService.debug(
-      `WebSocket listener set up for chainId: ${network.chain.id}`,
-    );
+      provider.on(
+        {
+          topics: [Object.values(tradeEventsData.signatures)],
+        },
+        async (log: ethers.Log) => {
+          try {
+            await this.processTradeEventLog(provider, log);
+            await this.updateChainBlockOffset(
+              network.chain,
+              BigInt(log.blockNumber + 1),
+            );
+          } catch (error) {
+            this.loggerService.error(
+              'Failed to process WebSocket event log',
+              error,
+              {
+                data: { eventType: 'trade', log },
+              },
+            );
+          }
+        },
+      );
+
+      provider.on(
+        {
+          topics: [[resolutionEventData.signature]],
+        },
+        async (log: ethers.Log) => {
+          try {
+            await this.processGeneralEvent(provider, log, 'resolve');
+            await this.updateChainBlockOffset(
+              network.chain,
+              BigInt(log.blockNumber + 1),
+            );
+          } catch (error) {
+            this.loggerService.error(
+              'Failed to process WebSocket event log',
+              error,
+              {
+                data: { eventType: 'resolve', log },
+              },
+            );
+          }
+        },
+      );
+
+      provider.on(
+        {
+          topics: [[payoutRedemptionEventData.signature]],
+        },
+        async (log: ethers.Log) => {
+          try {
+            await this.processGeneralEvent(
+              provider,
+              log,
+              'redeem',
+              network.chain.id,
+            );
+            await this.updateChainBlockOffset(
+              network.chain,
+              BigInt(log.blockNumber + 1),
+            );
+          } catch (error) {
+            this.loggerService.error(
+              'Failed to process WebSocket event log',
+              error,
+              {
+                data: { eventType: 'redeem', log },
+              },
+            );
+          }
+        },
+      );
+
+      websocket.addEventListener('close', async () => {
+        this.prepareToRetryRpcConnection(
+          network,
+          `Listener webSocket disconnected from blockchain`,
+        );
+      });
+
+      websocket.on('error', () => {});
+    } catch (err) {
+      this.prepareToRetryRpcConnection(
+        network,
+        'Failed to setup blockchain listeners or indexer',
+        { err },
+      );
+    }
   }
 
   async getBlocksTransactions(
@@ -144,33 +277,32 @@ export class BlockchainIndexerService {
     };
   }
 
-  async getLatestBlock(chainId: number) {
-    const network = this.networks[chainId];
-    if (!network) throw new Error('Chain not supported right now.');
-    const latestBlockNumber = await network.provider.getBlockNumber();
-    return this.getBlocksTransactions(network.provider, latestBlockNumber);
-  }
-
   updateChainBlockOffset(chain: Chain, blockNumber: bigint) {
     chain.blockProcessOffset = blockNumber;
-    return this.blockchainWalletService.updateChainData(chain.id, {
+    return this.blockchainHelperService.updateChainData(chain.id, {
       blockProcessOffset: blockNumber,
     });
   }
 
-  async checkoutChainLogs(
-    chainId: number,
-    retryOnDisconnection: boolean = true,
-  ) {
-    this.loggerService.debug('Checking out blockchain ...');
+  async checkoutChainLogs(chainId: number) {
+    this.loggerService.debug('HttpIndexer is checking out on blockchain...');
     const network = this.networks[chainId];
     let latestBlockNumber: bigint;
     try {
       latestBlockNumber = BigInt(await network.provider.getBlockNumber());
     } catch (ex) {
-      // Mostly means provider is disconnected:
-      this.networks[chainId] = this.newHttpProvider(network.chain);
-      if (retryOnDisconnection) await this.checkoutChainLogs(chainId, false);
+      this.loggerService.error(
+        `Chain#${chainId}: HttpIndexer failed, JsonRpcProvider seems disconnected.`,
+        ex as Error,
+        {
+          data: {
+            fetchedLatestBlock: latestBlockNumber,
+            lastProcessedBlock: network.chain.blockProcessOffset,
+            chainId,
+            rpc: network.chain.rpcUrl,
+          },
+        },
+      );
       return;
     }
 
@@ -206,7 +338,26 @@ export class BlockchainIndexerService {
               toBlock,
               topics: [[resolutionEventData.signature]],
             })
-          ).map((log) => this.processResolveEvent(network.provider, log)),
+          ).map((log) =>
+            this.processGeneralEvent(network.provider, log, 'resolve'),
+          ),
+        );
+
+        await Promise.all(
+          (
+            await network.provider.getLogs({
+              fromBlock,
+              toBlock,
+              topics: [[payoutRedemptionEventData.signature]],
+            })
+          ).map((log) =>
+            this.processGeneralEvent(
+              network.provider,
+              log,
+              'redeem',
+              network.chain.id,
+            ),
+          ),
         );
       }
     } catch (err) {
@@ -235,7 +386,8 @@ export class BlockchainIndexerService {
         return {
           trader: log.args.transactor,
           tokenAmounts: log.args.outcomeTokenAmounts,
-          fee: log.args.marketFees,
+          marketFee: log.args.marketFees,
+          cost: log.args.outcomeTokenNetCost,
         };
       case PredictionMarketTypesEnum.FPMM.toString():
         const argumentNames = tradeEventsData.arguments[log.name];
@@ -249,7 +401,9 @@ export class BlockchainIndexerService {
                 tradeEventsData.valueCoefficients[log.name]
               : 0n,
           ),
-          fee: log.args[argumentNames[2]],
+          marketFee: log.args[argumentNames[2]],
+          cost: 0n, // FIXME: FPMM contract does not return cost like LMSR;
+          // You must find a way to calculate that (considering that trade has happened and token price has changed)
         };
     }
     throw new NotImplementedException(
@@ -261,7 +415,7 @@ export class BlockchainIndexerService {
     provider: ethers.JsonRpcProvider | ethers.WebSocketProvider,
     log: ethers.Log,
   ) {
-    let decodedLog: ethers.LogDescription;
+    let decodedLog: PredictionMarketTradeDataType | null = null;
     try {
       const market = await this.predictionMarketService.getMarketByAddress(
         log.address,
@@ -274,25 +428,34 @@ export class BlockchainIndexerService {
         },
       );
       if (!market?.isOpen) return;
-      const marketMakerContract = new ethers.Contract(
-        market.address,
-        market.ammFactory.marketMakerABI,
-        provider,
+      const marketMakerContract =
+        this.blockchainHelperService.getAmmContractHandler(market, provider);
+      decodedLog = this.extractTradeDataFromEventLog(
+        market,
+        marketMakerContract.interface.parseLog(log),
       );
-      decodedLog = marketMakerContract.interface.parseLog(log);
 
       this.loggerService.debug(`A Trade has happened on market#${market.id}.`, {
         data: {
-          market: { id: market.id, question: market.question, log, decodedLog },
+          market: {
+            id: market.id,
+            question: market.question,
+            decodedLog: tradeDataToJSON(decodedLog),
+            log: log.toJSON(),
+          },
         },
       });
-      await this.predictionMarketService.updateParticipationStatistics(
+
+      await this.predictionMarketService.updateMarketParticipations(
         market,
-        this.extractTradeDataFromEventLog(market, decodedLog),
+        decodedLog,
       );
     } catch (ex) {
       this.loggerService.error('Failed processing trade log', ex as Error, {
-        data: { log, decodedLog },
+        data: {
+          log,
+          ...(decodedLog ? { decodedLog: tradeDataToJSON(decodedLog) } : {}),
+        },
       });
     }
   }
@@ -311,31 +474,61 @@ export class BlockchainIndexerService {
     };
   }
 
-  async processResolveEvent(
+  extractPayoutRedemptionDataFromEventLog(
+    log: ethers.LogDescription,
+  ): PayoutRedemptionEventDataType {
+    return {
+      redeemer: log.args[payoutRedemptionEventData.arguments[0]] as string,
+      collateralToken: log.args[
+        payoutRedemptionEventData.arguments[1]
+      ] as string,
+      parentCollectionId: log.args[
+        payoutRedemptionEventData.arguments[2]
+      ] as string,
+      conditionId: log.args[payoutRedemptionEventData.arguments[3]] as string,
+      indexSets: log.args[
+        payoutRedemptionEventData.arguments[4]
+      ] as Array<number>,
+      payout: BigInt(log.args[payoutRedemptionEventData.arguments[5]]),
+    };
+  }
+
+  async processGeneralEvent(
     provider: ethers.JsonRpcProvider | ethers.WebSocketProvider,
     log: ethers.Log,
+    eventType: 'redeem' | 'resolve' = 'resolve',
+    chainId: number = null,
   ) {
     let decodedLog: ethers.LogDescription;
     try {
-      const conditionalTokenContract = new ethers.Contract(
-        log.address,
-        ConditionTokenContractData.abi,
-        provider,
-      );
+      const conditionalTokenContract =
+        this.blockchainHelperService.getContractHandler(
+          { address: log.address, abi: ConditionTokenContractData.abi },
+          provider,
+        );
       decodedLog = conditionalTokenContract.interface.parseLog(log);
-      await this.predictionMarketService.setMarketResolutionData(
-        this.extractResolutionDataFromEventLog(decodedLog),
-      );
+      switch (eventType) {
+        case 'redeem':
+          await this.predictionMarketService.updateRedeemHistory(
+            this.extractPayoutRedemptionDataFromEventLog(decodedLog),
+            chainId,
+          );
+          break;
+        case 'resolve':
+          await this.predictionMarketService.setMarketResolutionData(
+            this.extractResolutionDataFromEventLog(decodedLog),
+          );
+          break;
+      }
     } catch (ex) {
       this.loggerService.error(
-        'Finalizing market resolution failed!',
+        `Processing market ${eventType} event log failed!`,
         ex as Error,
-        { data: { log, decodedLog } },
+        { data: { log, decodedLog, eventType } },
       );
     }
   }
 
-  // @Cron('*/20 * * * * *')
   async processNetworks() {
     await Promise.all(
       Object.keys(this.networks).map((chainId: string) =>

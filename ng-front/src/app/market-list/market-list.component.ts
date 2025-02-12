@@ -1,5 +1,5 @@
 import { Component, OnInit } from '@angular/core';
-import { MarketService } from '../market.service';
+import { MarketService } from '../api/market.service';
 import { Router } from '@angular/router';
 import { NgFor } from '@angular/common';
 

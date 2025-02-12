@@ -1,7 +1,8 @@
 import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../core/base.entity';
-import { BlockchainWallet } from '../../blockchain-wallet/entities/blockchain-wallet.entity';
-import { ContractEntity } from '../../prediction-market-contracts/entities/contract.entity';
+import { BlockchainWallet } from '../../blockchain-core/entities/blockchain-wallet.entity';
+import { ContractEntity } from '../../blockchain-core/entities/contract.entity';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export enum OracleTypesEnum {
   DECENTRALIZED = 'decentralized',
@@ -10,15 +11,22 @@ export enum OracleTypesEnum {
 
 @Entity()
 export class Oracle extends BaseEntity {
+  @ApiProperty({ type: 'string' })
   @Column({ type: 'varchar', length: 256 })
   name: string;
 
+  @ApiPropertyOptional({ type: 'string', nullable: true })
   @Column({ nullable: true })
   icon?: string;
 
+  @ApiPropertyOptional({ type: 'string', nullable: true })
   @Column({ nullable: true })
   description?: string;
 
+  @ApiProperty({
+    type: 'string',
+    example: OracleTypesEnum.CENTRALIZED.toString(),
+  })
   @Column({
     type: 'varchar',
     length: 16,
@@ -29,6 +37,12 @@ export class Oracle extends BaseEntity {
   type: string;
 
   // centralized oracle
+  @ApiPropertyOptional({
+    type: 'number',
+    nullable: true,
+    description:
+      'If the oracle is centralized, this is its BlockchainWallet id',
+  })
   @Column({
     name: 'account_id',
     type: 'integer',
@@ -37,11 +51,23 @@ export class Oracle extends BaseEntity {
   })
   accountId?: number | null;
 
+  @ApiPropertyOptional({
+    type: BlockchainWallet,
+    nullable: true,
+    description:
+      'If the oracle is centralized, this is its BlockchainWallet data', // TODO: add the ExcludePrivateInfo decorator to project and use it for this field, to hide secret.
+  })
   @ManyToOne(() => BlockchainWallet, { eager: true, onDelete: 'NO ACTION' })
   @JoinColumn({ name: 'account_id' })
   account?: BlockchainWallet | null;
 
   // decentralized oracles:
+  @ApiPropertyOptional({
+    type: 'number',
+    nullable: true,
+    description:
+      'If the oracle is decentralized, this is its ContractEntity id',
+  })
   @Column({
     name: 'contract_id',
     type: 'integer',
@@ -50,6 +76,11 @@ export class Oracle extends BaseEntity {
   })
   contractId?: number | null;
 
+  @ApiPropertyOptional({
+    type: BlockchainWallet,
+    nullable: true,
+    description: 'If the oracle is decentralized, this is its Contract data',
+  })
   @ManyToOne(() => ContractEntity, { eager: true, onDelete: 'NO ACTION' })
   @JoinColumn({ name: 'contract_id' })
   contract?: ContractEntity | null;

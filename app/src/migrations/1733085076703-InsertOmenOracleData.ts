@@ -1,7 +1,7 @@
 import { OracleConstants } from '../core/constants/constants';
 import { OracleTypesEnum } from '../prediction-market/entities/oracle.entity';
 import { MigrationInterface, QueryRunner } from 'typeorm';
-import { BlockchainWallet } from '../blockchain-wallet/entities/blockchain-wallet.entity';
+import { BlockchainWallet } from '../blockchain-core/entities/blockchain-wallet.entity';
 import { ConfigService } from '../config/config.service';
 
 const configService = new ConfigService();

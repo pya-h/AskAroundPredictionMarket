@@ -1,6 +1,19 @@
+import { TokenTypeEnum } from '../../wallet/entities/token.entity';
 import { QueryRunner } from 'typeorm';
 import { UserConstants } from '../constants/constants';
 import { NotFoundException } from '@nestjs/common';
+
+export const getTokenIds = async (queryRunner: QueryRunner) => {
+  const tokens = {};
+  for (const tokenType of Object.values(TokenTypeEnum)) {
+    const result = await queryRunner.query(
+      'SELECT id FROM public."token" WHERE type=$1 LIMIT 1;',
+      [tokenType],
+    );
+    if (result?.length) tokens[tokenType] = +result[0].id;
+  }
+  return tokens;
+};
 
 export const dropForeignKeys = async (
   queryRunner: QueryRunner,
@@ -24,5 +37,14 @@ export const getDefaultAdminId = async (queryRunner: QueryRunner) => {
     [UserConstants.ADMIN_USERNAME],
   );
   if (!result?.length) throw new NotFoundException('Admin user not found!');
+  return result[0].id;
+};
+
+export const getSalesmanId = async (queryRunner: QueryRunner) => {
+  const result = await queryRunner.query(
+    'SELECT id FROM public."user" WHERE username=$1',
+    [UserConstants.SALESMAN_USERNAME],
+  );
+  if (!result?.length) throw new NotFoundException('Salesman user not found!');
   return result[0].id;
 };

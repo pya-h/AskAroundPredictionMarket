@@ -35,12 +35,12 @@ export class ResolvePredictionMarketDto {
 
   @ApiPropertyOptional({
     description:
-      'Force close market if its resolve due has not reached yet. (Only Admins)',
+      'If admin intends to force a centralized oracle to resolve a market. This flag is some kind of safety measure.',
     required: false,
     default: null,
   })
   @IsBoolean({ message: 'The field can only be true or false or left empty.' })
   @IsOptional()
-  forceClose?: boolean;
+  force?: boolean;
   // hint: resolving a market can only be done with exactly one approach (field)
 }

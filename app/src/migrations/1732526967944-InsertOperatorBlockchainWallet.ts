@@ -1,6 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 import { ConfigService } from '../config/config.service';
-import { BlockchainWallet } from '../blockchain-wallet/entities/blockchain-wallet.entity';
+import { BlockchainWallet } from '../blockchain-core/entities/blockchain-wallet.entity';
 import { getDefaultAdminId } from '../core/migrations';
 
 const configService = new ConfigService();

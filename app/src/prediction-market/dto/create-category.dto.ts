@@ -5,7 +5,6 @@ import {
   IsOptional,
   IsPositive,
   IsString,
-  IsUrl,
   MaxLength,
 } from 'class-validator';
 
@@ -30,10 +29,10 @@ export class CreatePredictionMarketCategoryDto {
 
   @ApiPropertyOptional({
     description:
-      'The link of the category icon you wish to be shown beside category name.',
+      'The Minio filename of the uploaded category icon you wish to be shown beside category name.',
   })
   @IsOptional()
-  @IsUrl()
+  @IsString({ message: 'Specify a returned filename from upload endpoint.' })
   icon?: string;
 
   @ApiPropertyOptional({

@@ -1,36 +1,32 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
+  LoggerService,
   NotFoundException,
   NotImplementedException,
 } from '@nestjs/common';
-import { PredictionOutcome } from '../prediction-market/entities/outcome.entity';
-import { ethers } from 'ethers';
+import { ethers, TransactionReceipt } from 'ethers';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { BlockchainWallet } from '../blockchain-wallet/entities/blockchain-wallet.entity';
 import { ConditionTokenContractData } from './abis/ctf.abi';
-import { CryptocurrencyToken } from '../blockchain-wallet/entities/cryptocurrency-token.entity';
+import { CryptocurrencyToken } from '../blockchain-core/entities/cryptocurrency-token.entity';
 import {
   Oracle,
   OracleTypesEnum,
 } from '../prediction-market/entities/oracle.entity';
 import { MarketMakerFactory } from './entities/market-maker-factory.entity';
-import { CryptoTokenEnum } from './enums/crypto-token.enum';
+import { CryptoTokenEnum } from '../blockchain-core/enums/crypto-token.enum';
 import { PredictionMarket } from '../prediction-market/entities/market.entity';
 import BigNumber from 'bignumber.js';
 import { PredictionMarketTypesEnum } from './enums/market-types.enum';
-import { LmsrMarketHelper } from './helpers/lmsr-market.helper';
-import { BlockchainWalletService } from '../blockchain-wallet/blockchain-wallet.service';
+import { LmsrMarketHelperService } from './helpers/lmsr-market-helper.service';
+import { BlockchainWalletService } from '../blockchain-core/blockchain-wallet.service';
+import { BlockchainHelperService } from '../blockchain-core/blockchain-helper.service';
+import { BaseConditionalToken } from '../prediction-market/entities/bases/base-conditional-token.entity';
 
 @Injectable()
 export class PredictionMarketContractsService {
-  private provider: ethers.JsonRpcProvider;
-  private operator: { wallet: BlockchainWallet; ethers: ethers.Wallet };
-  private conditionalTokensContract: ethers.Contract;
-
   toKeccakHash(data: string) {
     return ethers.keccak256(ethers.toUtf8Bytes(data));
   }
@@ -39,41 +35,56 @@ export class PredictionMarketContractsService {
     @InjectRepository(MarketMakerFactory)
     private readonly marketMakerFactoryRepository: Repository<MarketMakerFactory>,
     private readonly blockchainWalletService: BlockchainWalletService,
-  ) {
-    this.init().catch((ex) =>
-      console.error('Failed to init blockchain service:', ex),
+    private readonly blockchainHelperService: BlockchainHelperService,
+    private readonly lmsrMarketHelperService: LmsrMarketHelperService,
+    private readonly loggerService: LoggerService,
+  ) {}
+
+  get conditionalTokensContract(): ethers.Contract {
+    return this.blockchainHelperService.getContractHandler(
+      ConditionTokenContractData,
     );
   }
 
-  async init() {
-    const localTestnet = await this.blockchainWalletService.getChain(1337);
-    this.provider = new ethers.JsonRpcProvider(localTestnet.rpcUrl);
-    const wallet = await this.blockchainWalletService.getOperatorWallet();
-    this.operator = {
-      wallet,
-      ethers: new ethers.Wallet(wallet.privateKey, this.provider),
-    };
-
-    this.conditionalTokensContract = new ethers.Contract(
-      ConditionTokenContractData.address,
-      ConditionTokenContractData.abi,
-      this.operator.ethers,
-    );
+  getMarketMakerFactoryById(id: number) {
+    return this.marketMakerFactoryRepository.findOneBy({ id });
   }
 
-  async getCurrentChainId() {
-    return Number((await this.provider.getNetwork()).chainId);
-  }
-
-  async getDefaultMarketMaker(chainId?: number) {
+  async getDefaultMarketMakerFactory(chainId?: number) {
     return this.marketMakerFactoryRepository.findOne({
       where: {
-        chainId: chainId || (await this.getCurrentChainId()),
+        chainId:
+          chainId || (await this.blockchainHelperService.getCurrentChainId()),
       },
       order: {
         id: 'ASC',
       },
     });
+  }
+
+  async getMarketMakerFactoryByType(
+    type: PredictionMarketTypesEnum,
+    {
+      chainId = null,
+      shouldThrow = false,
+    }: { chainId?: number; shouldThrow?: boolean } = {},
+  ) {
+    const factory = await this.marketMakerFactoryRepository.findOne({
+      where: {
+        type,
+        chainId:
+          chainId || (await this.blockchainHelperService.getCurrentChainId()),
+      },
+      order: {
+        id: 'ASC',
+      },
+    });
+    if (!factory && shouldThrow) {
+      throw new NotImplementedException(
+        `OmenArena doesn't support ${type} market on this chain yet!`,
+      );
+    }
+    return factory;
   }
 
   outcomeIndexToIndexSet(outcomeIndices: number | number[]) {
@@ -93,14 +104,14 @@ export class PredictionMarketContractsService {
 
   async createMarket(
     marketMakerFactoryIdentifier: number | MarketMakerFactory,
-    collateralTokenSymbol: CryptoTokenEnum,
+    collateralTokenOrSymbol: CryptocurrencyToken | CryptoTokenEnum,
     question: string,
-    outcomes: PredictionOutcome[],
+    outcomes: BaseConditionalToken[],
     initialLiquidityInEth: number,
     oracle: Oracle,
-    _shouldResolveAt: Date,
   ) {
-    const currentChainId = await this.getCurrentChainId();
+    const currentChainId =
+      await this.blockchainHelperService.getCurrentChainId();
 
     const [factory, collateralToken] = await Promise.all([
       marketMakerFactoryIdentifier instanceof MarketMakerFactory
@@ -109,15 +120,20 @@ export class PredictionMarketContractsService {
             id: marketMakerFactoryIdentifier,
             chainId: currentChainId,
           }),
-      this.blockchainWalletService.getCryptocurrencyToken(
-        collateralTokenSymbol,
-        currentChainId,
-      ),
+      collateralTokenOrSymbol instanceof CryptocurrencyToken
+        ? collateralTokenOrSymbol
+        : this.blockchainHelperService.getCryptocurrencyToken(
+            collateralTokenOrSymbol,
+            currentChainId,
+          ),
     ]);
     if (!factory) {
       throw new NotFoundException("This kind of AMM doesn't exist!");
     }
-    if (factory.maxSupportedOutcomes < outcomes.length)
+    if (
+      factory.maxSupportedOutcomes &&
+      factory.maxSupportedOutcomes < outcomes.length
+    )
       throw new BadRequestException(
         `This AMM doesn't support more than ${factory.maxSupportedOutcomes} outcomes.`,
       );
@@ -126,94 +142,120 @@ export class PredictionMarketContractsService {
       throw new BadRequestException(
         'Unfortunately this cryptocurrency is not supported to be used as collateral token in this network.',
       );
-    const marketMakerFactoryContract = new ethers.Contract(
-        factory.address,
-        factory.abi,
-        this.operator.ethers,
-      ),
-      collateralTokenContract = new ethers.Contract(
-        collateralToken.address,
-        collateralToken.abi,
-        this.operator.ethers,
-      );
+    const marketMakerFactoryContract =
+        this.blockchainHelperService.getContractHandler(factory),
+      collateralTokenContract =
+        this.blockchainHelperService.getContractHandler(collateralToken);
     const initialLiquidity = ethers.parseEther(
       initialLiquidityInEth.toString(),
     );
+
     const questionId = this.toKeccakHash(question);
+    this.loggerService.debug(
+      `#DeployMarket: ${question} - questionId = ${questionId} - START`,
+    );
+
     const prepareConditionTx =
-      await this.conditionalTokensContract.prepareCondition(
+      await this.blockchainHelperService.call<ethers.TransactionReceipt>(
+        this.conditionalTokensContract,
+        { name: 'prepareCondition' },
         oracle.address,
         questionId,
         outcomes.length,
       );
-    await prepareConditionTx.wait();
-    console.log('Prepare condition finished, trx: ', prepareConditionTx);
 
-    const conditionId = await this.conditionalTokensContract.getConditionId(
+    const conditionId = await this.blockchainHelperService.call<string>(
+      this.conditionalTokensContract,
+      { name: 'getConditionId', isView: true },
       oracle.address,
       questionId,
       outcomes.length,
     );
-    console.warn('Condition id = ', conditionId);
 
-    const collateralDepositTx = await collateralTokenContract.deposit({
-      value: initialLiquidity,
-      nonce: await this.operator.ethers.getNonce(),
-    });
-    await collateralDepositTx.wait();
-    console.log(
-      'Collateral token deposit completed, trx:',
-      collateralDepositTx,
+    this.loggerService.debug(
+      `#DeployMarket: Preparing Condition - SUCCESS => conditionId: ${conditionId}`,
     );
 
-    const approveTx = await collateralTokenContract.approve(
+    const operatorCollateralBalance =
+      await this.blockchainHelperService.call<bigint>(
+        collateralTokenContract,
+        { name: 'balanceOf', isView: true },
+        this.blockchainHelperService.operatorAccount.address,
+      );
+
+    this.loggerService.debug(
+      `#DeployMarket: Get Operator Collateral Balance - SUCCESS => ${operatorCollateralBalance}`,
+    );
+
+    if (operatorCollateralBalance < initialLiquidity) {
+      await this.blockchainHelperService.call(
+        collateralTokenContract,
+        { name: 'deposit' },
+        {
+          value: initialLiquidity - operatorCollateralBalance,
+        },
+      );
+
+      this.loggerService.debug(
+        `#DeployMarket: Deposit ${initialLiquidityInEth} Collateral for Liquidity - SUCCESS`,
+      );
+    }
+
+    await this.blockchainHelperService.call(
+      collateralTokenContract,
+      { name: 'approve' },
       factory.address,
       initialLiquidity,
     );
-    await approveTx.wait();
-    console.warn('Liquidity deposit completed and approved.');
 
-    let lmsrFactoryTx = await marketMakerFactoryContract.createLMSRMarketMaker(
-      ConditionTokenContractData.address,
-      collateralToken.address,
-      [conditionId],
-      0,
-      '0x0000000000000000000000000000000000000000',
-      initialLiquidity,
-      {
-        from: this.operator.ethers.address,
-        nonce: await this.operator.ethers.getNonce(),
-      },
+    this.loggerService.debug(
+      '#DeployMarket: Collateral Use Approval for AMM Factory - SUCCESS',
     );
 
-    lmsrFactoryTx = await lmsrFactoryTx.wait();
-    console.log('LMSR Market creation finished, trx: ', lmsrFactoryTx);
+    const lmsrFactoryTx =
+      await this.blockchainHelperService.call<ethers.ContractTransactionReceipt>(
+        marketMakerFactoryContract,
+        { name: 'createLMSRMarketMaker' },
+        ConditionTokenContractData.address, // pmSystem
+        collateralToken.address,
+        [conditionId],
+        0, // market fee
+        '0x0000000000000000000000000000000000000000', // whitelist
+        initialLiquidity,
+      );
 
-    const creationLog = await this.findEventByName(
-      lmsrFactoryTx,
-      marketMakerFactoryContract,
-      factory.marketMakerCreationEvent,
+    this.loggerService.debug(
+      `#DeployMarket: LMSR MARKET CREATION - SUCCESS => txHash: ${lmsrFactoryTx.hash}`,
     );
+
+    const startedAt = new Date();
+
+    const creationLog =
+      await this.blockchainHelperService.getEventLogFromReceipt(
+        lmsrFactoryTx,
+        marketMakerFactoryContract,
+        factory.marketMakerCreationEvent,
+      );
 
     if (!creationLog[0]?.args?.[factory.marketMakerAddressField]) {
-      console.error(
+      this.loggerService.error(
         'Failed to find out the created market maker contract address data: creationLog:',
-        creationLog,
-        'trx: ',
-        JSON.stringify(lmsrFactoryTx, null, 2),
+        null,
+        { data: { tx: JSON.stringify(lmsrFactoryTx, null, 2) } },
       );
       throw new ConflictException(
         'Although the market creation seems ok, but server fails to find its contract!',
       );
     }
 
-    console.log(
-      'Found MarketMaker contract address data. Blockchain processes all finished.',
+    this.loggerService.debug(
+      `#DeployMarket: Find Market Address from Market Creation Log - SUCCESS => MarketAddress: ${
+        creationLog[0].args[factory.marketMakerAddressField]
+      }\n#DeployMarket: Market Successfully Deployed To Blockchain.`,
     );
 
     return {
-      conditionId: conditionId as string,
-      creatorId: this.operator.wallet.userId,
+      conditionId: conditionId,
       question,
       questionId,
       marketMakerFactory: factory,
@@ -222,33 +264,11 @@ export class PredictionMarketContractsService {
       collateralToken,
       liquidity: initialLiquidityInEth,
       liquidityWei: initialLiquidity,
-      prepareConditionTxHash: prepareConditionTx.hash as string,
-      createMarketTxHash: lmsrFactoryTx.hash as string,
+      prepareConditionTxHash: prepareConditionTx.hash,
+      createMarketTxHash: lmsrFactoryTx.hash,
       chainId: currentChainId,
+      startedAt,
     };
-  }
-
-  async findEventByName(
-    transactionReceipt: ethers.ContractTransactionReceipt,
-    contract: ethers.Contract,
-    eventName: string,
-  ): Promise<ethers.LogDescription[]> {
-    try {
-      const eventFragment = contract.interface.getEvent(eventName);
-      const eventTopics = contract.interface.encodeFilterTopics(
-        eventFragment,
-        [],
-      );
-
-      const logs = transactionReceipt.logs.filter(
-        (log) => log.topics[0] === eventTopics[0], // Compare the event signature topic
-      );
-
-      return logs.map((log) => contract.interface.parseLog(log));
-    } catch (error) {
-      console.error('Error finding event by name:', error);
-      throw error;
-    }
   }
 
   getCollectionId(
@@ -257,7 +277,7 @@ export class PredictionMarketContractsService {
     parentCollectionId: string | null = null,
   ) {
     return this.conditionalTokensContract.getCollectionId(
-      parentCollectionId || this.blockchainWalletService.zeroAddress,
+      parentCollectionId || this.blockchainHelperService.zeroAddress,
       conditionId,
       this.outcomeIndexToIndexSet(possibleOutcomeIndices),
     );
@@ -269,7 +289,7 @@ export class PredictionMarketContractsService {
     parentCollectionId: string | null = null,
   ) {
     return this.conditionalTokensContract.getCollectionId(
-      parentCollectionId || this.blockchainWalletService.zeroAddress,
+      parentCollectionId || this.blockchainHelperService.zeroAddress,
       conditionId,
       indexSetValue,
     );
@@ -304,51 +324,56 @@ export class PredictionMarketContractsService {
     market: PredictionMarket,
     selectedOutcomeIndex: number,
     amount: number,
+    manualCollateralLimit: number = null,
   ) {
-    const traderWallet = await this.blockchainWalletService.getWallet(traderId);
-    const tradersEthersWallet = new ethers.Wallet(
-      traderWallet.privateKey,
-      this.provider,
+    const trader = this.blockchainHelperService.getEthereumAccount(
+      await this.blockchainWalletService.getWallet(traderId),
     );
-    const marketMakerContract = new ethers.Contract(
-      market.address,
-      market.ammFactory.marketMakerABI,
-      tradersEthersWallet,
-    );
-    const collateralTokenContract = new ethers.Contract(
-      market.collateralToken.address,
-      market.collateralToken.abi,
-      tradersEthersWallet,
-    );
-    console.log(
-      'weth9 decimals: ',
-      await this.blockchainWalletService.getCryptoTokenDecimals(
+    const marketMakerContract =
+      this.blockchainHelperService.getAmmContractHandler(market, trader.ethers);
+    const collateralTokenContract =
+      this.blockchainHelperService.getContractHandler(
         market.collateralToken,
-      ),
-    );
+        trader.ethers,
+      );
 
     switch (market.type) {
       case PredictionMarketTypesEnum.LMSR.toString():
-        const formattedAmount = await this.blockchainWalletService.etherToWei(
-          Math.abs(amount),
-          market.collateralToken,
-        );
+        const [formattedAmount, formattedCollateralLimit] = await Promise.all([
+          this.blockchainHelperService.toWei(
+            Math.abs(amount),
+            market.collateralToken,
+          ),
+          manualCollateralLimit
+            ? this.blockchainHelperService.toWei(
+                manualCollateralLimit,
+                market.collateralToken,
+              )
+            : null,
+        ]);
+
         return amount > 0
-          ? LmsrMarketHelper.get(this.provider).buyOutcomeToken(
-              traderWallet.address,
+          ? this.lmsrMarketHelperService.buyOutcomeToken(
+              trader,
               market,
-              BigInt(formattedAmount.toString()),
+              BigInt(formattedAmount.toFixed()), // using BigNumber.toFixed() to prevent it from converting too large/small numbers to their scientific notion string
+              //  which causes BigInt() throw conversion error.
               selectedOutcomeIndex,
               marketMakerContract,
               collateralTokenContract,
+              formattedCollateralLimit
+                ? BigInt(formattedCollateralLimit.toFixed())
+                : null,
             )
-          : LmsrMarketHelper.get(this.provider).sellOutcomeToken(
-              traderWallet.address,
-              tradersEthersWallet,
+          : this.lmsrMarketHelperService.sellOutcomeToken(
+              trader,
               market,
-              BigInt(formattedAmount.toString()),
+              BigInt(formattedAmount.toFixed()),
               selectedOutcomeIndex,
               marketMakerContract,
+              formattedCollateralLimit
+                ? BigInt(formattedCollateralLimit.toFixed())
+                : null,
             );
       case PredictionMarketTypesEnum.FPMM.toString():
         throw new NotImplementedException('Not fully implemented yet.');
@@ -384,8 +409,7 @@ export class PredictionMarketContractsService {
       positionId,
     );
 
-    console.log('balance (wei):', balanceWei);
-    return this.blockchainWalletService.weiToEthers(
+    return this.blockchainHelperService.toEthers(
       balanceWei,
       market.collateralToken,
     );
@@ -409,24 +433,23 @@ export class PredictionMarketContractsService {
     return this.getConditionalTokenBalance(market, indexSet, market.address);
   }
 
-  async getMarketOutcomePrice(market: PredictionMarket, index: number) {
-    const marketMakerContract = new ethers.Contract(
-      market.address,
-      market.ammFactory.marketMakerABI,
-      this.operator.ethers,
-    );
+  async getMarketOutcomePrice(
+    market: PredictionMarket,
+    index: number,
+    amount: number = 1,
+  ) {
     switch (market.type) {
       case PredictionMarketTypesEnum.LMSR.toString():
-        const unitInWei = await this.blockchainWalletService.etherToWei(
-          1,
+        const unitInWei = await this.blockchainHelperService.toWei(
+          amount,
           market.collateralToken,
         );
-        return this.blockchainWalletService.weiToEthers(
-          await LmsrMarketHelper.get(this.provider).calculateOutcomeTokenPrice(
+
+        return this.blockchainHelperService.toEthers(
+          await this.lmsrMarketHelperService.calculateOutcomeTokenPrice(
             market,
             index,
-            BigInt(unitInWei.toString()),
-            marketMakerContract,
+            BigInt(unitInWei.toFixed()),
           ),
           market.collateralToken,
         );
@@ -437,35 +460,67 @@ export class PredictionMarketContractsService {
     }
   }
 
-  async getMarketAllOutcomePrices(market: PredictionMarket) {
-    const marketMakerContract = new ethers.Contract(
-      market.address,
-      market.ammFactory.marketMakerABI,
-      this.operator.ethers,
-    );
-    const unitInWei = BigInt(
+  async getBatchOutcomePrices(market: PredictionMarket, amounts: number[]) {
+    switch (market.type) {
+      case PredictionMarketTypesEnum.LMSR.toString():
+        const amountsInWei = await Promise.all(
+          amounts.map((amount) =>
+            this.blockchainHelperService.toWei(amount, market.collateralToken),
+          ),
+        );
+
+        return this.blockchainHelperService.toEthers(
+          await this.lmsrMarketHelperService.calculatePriceOfBatchOutcomes(
+            market,
+            amountsInWei.map((x) => BigInt(x.toFixed())),
+          ),
+          market.collateralToken,
+        );
+      case PredictionMarketTypesEnum.FPMM.toString():
+        throw new NotImplementedException('Not fully implemented yet.');
+      case PredictionMarketTypesEnum.ORDER_BOOK.toString():
+        throw new NotImplementedException('Not implemented yet.');
+    }
+  }
+
+  async getMarketAllOutcomePrices(
+    market: PredictionMarket,
+    amount: number = 1,
+  ) {
+    const amountInWei = BigInt(
       (
-        await this.blockchainWalletService.etherToWei(1, market.collateralToken)
-      ).toString(),
+        await this.blockchainHelperService.toWei(
+          amount || 1,
+          market.collateralToken,
+        )
+      ).toFixed(),
     );
+
+    if (!market.isOpen) {
+      return market.outcomeTokens?.map((outcome) => ({
+        id: outcome.id,
+        outcome: outcome.predictionOutcome.title,
+        index: outcome.tokenIndex,
+        price: outcome.truenessRatio,
+        token: outcome,
+      }));
+    }
 
     switch (market.type) {
       case PredictionMarketTypesEnum.LMSR.toString():
-        const mmHelper = LmsrMarketHelper.get(this.provider);
         const prices = await Promise.all(
           (
             await Promise.all(
               market.outcomeTokens.map((outcome) =>
-                mmHelper.calculateOutcomeTokenPrice(
+                this.lmsrMarketHelperService.calculateOutcomeTokenPrice(
                   market,
                   outcome.tokenIndex,
-                  unitInWei,
-                  marketMakerContract,
+                  amountInWei,
                 ),
               ),
             )
           ).map((priceInWei) =>
-            this.blockchainWalletService.weiToEthers(
+            this.blockchainHelperService.toEthers(
               priceInWei,
               market.collateralToken,
             ),
@@ -473,9 +528,10 @@ export class PredictionMarketContractsService {
         );
 
         return prices.map((price, i) => ({
+          id: market.outcomeTokens[i].id,
           outcome: market.outcomeTokens[i].predictionOutcome.title,
           index: market.outcomeTokens[i].tokenIndex,
-          price,
+          price: price.toNumber(),
           token: market.outcomeTokens[i],
         }));
       case PredictionMarketTypesEnum.FPMM.toString():
@@ -486,24 +542,27 @@ export class PredictionMarketContractsService {
   }
 
   async closeMarket(market: PredictionMarket) {
-    const marketMakerContract = new ethers.Contract(
-      market.address,
-      market.ammFactory.marketMakerABI,
-      this.operator.ethers,
+    const marketMakerContract =
+      this.blockchainHelperService.getAmmContractHandler(market);
+
+    return this.blockchainHelperService.call<ethers.TransactionReceipt>(
+      marketMakerContract,
+      { name: 'close' },
     );
-    return (await marketMakerContract.close()).wait();
   }
 
   async getOutcomeTokenMarginalPrices(
     market: PredictionMarket,
     outcomeIndex: number,
   ) {
-    let weiPrice: bigint = 0n;
+    let weiPrice: bigint | number = 0n;
     switch (market.type) {
       case PredictionMarketTypesEnum.LMSR.toString():
-        weiPrice = await LmsrMarketHelper.get(
-          this.provider,
-        ).getOutcomeTokenMarginalPrices(market, outcomeIndex);
+        weiPrice =
+          await this.lmsrMarketHelperService.getOutcomeTokenMarginalPrices(
+            market,
+            outcomeIndex,
+          );
         break;
       case PredictionMarketTypesEnum.FPMM.toString():
         throw new NotImplementedException('Not fully implemented yet.');
@@ -514,30 +573,34 @@ export class PredictionMarketContractsService {
     }
     return new BigNumber(weiPrice.toString()).div(
       10 **
-        (await this.blockchainWalletService.getCryptoTokenDecimals(
+        (await this.blockchainHelperService.getCryptoTokenDecimals(
           market.collateralToken,
         )),
     );
   }
 
-  async resolveMarket(market: PredictionMarket, payoutVector: number[]) {
+  async resolveMarket(
+    market: PredictionMarket,
+    payoutVector: number[],
+  ): Promise<TransactionReceipt> {
     switch (market.oracle.type) {
       case OracleTypesEnum.CENTRALIZED.toString():
-        const oracleWallet = new ethers.Wallet(
-          market.oracle.account.privateKey,
-          this.provider,
-        );
-        const conditionalTokenContract = new ethers.Contract(
-          ConditionTokenContractData.address,
-          ConditionTokenContractData.abi,
-          oracleWallet,
-        );
-        const tx = await conditionalTokenContract.reportPayouts(
+        const oracleEthereumAccount =
+          this.blockchainHelperService.getEthereumAccount(
+            market.oracle.account,
+            market.chain,
+          );
+        const conditionalTokenContract =
+          this.blockchainHelperService.getContractHandler(
+            ConditionTokenContractData,
+            oracleEthereumAccount.ethers,
+          );
+        return this.blockchainHelperService.call<ethers.TransactionReceipt>(
+          conditionalTokenContract,
+          { name: 'reportPayouts', runner: oracleEthereumAccount },
           market.questionId,
           payoutVector,
         );
-        await tx.wait();
-        return tx;
 
       case OracleTypesEnum.DECENTRALIZED.toString():
         throw new NotImplementedException(
@@ -547,37 +610,52 @@ export class PredictionMarketContractsService {
   }
 
   async redeemMarketRewards(userId: number, market: PredictionMarket) {
-    try {
-      const indexSets = market.outcomeTokens.map((outcomeToken) =>
-        this.outcomeIndexToIndexSet(outcomeToken.tokenIndex),
-      );
-      const userWallet = await this.blockchainWalletService.getWallet(userId);
-      if (!userWallet?.secret)
-        throw new ForbiddenException('Missing user blockchain wallet data!');
-      const etherWallet = new ethers.Wallet(
-        userWallet.privateKey,
-        this.provider,
-      );
-      const ctContract = new ethers.Contract(
-        ConditionTokenContractData.address,
-        ConditionTokenContractData.abi,
-        etherWallet,
-      );
-      const tx = await ctContract.redeemPositions(
+    const indexSets = market.outcomeTokens.map((outcomeToken) =>
+      this.outcomeIndexToIndexSet(outcomeToken.tokenIndex),
+    );
+    const redeemer =
+      await this.blockchainWalletService.getEthereumAccount(userId);
+    const redeemReceipt =
+      await this.blockchainHelperService.call<ethers.TransactionReceipt>(
+        ConditionTokenContractData,
+        { name: 'redeemPositions', runner: redeemer },
         market.collateralToken.address,
-        this.blockchainWalletService.zeroAddress,
+        this.blockchainHelperService.zeroAddress,
         market.conditionId,
         indexSets,
       );
 
-      await tx.wait();
-      // TODO: search for PayoutRedemption event:
-      //    also Get total amount redeemed for user; return/throw proper message if the amount is zero
-      return {
-        redeemTx: tx,
-      };
-    } catch (ex) {
-      console.error(ex);
-    }
+    // TODO: search for PayoutRedemption event:
+    //    also Get total amount redeemed for user; return/throw proper message if the amount is zero
+    return {
+      receipt: redeemReceipt,
+    };
+  }
+
+  getMarketTradeFee(market: PredictionMarket) {
+    const marketMakerContract =
+      this.blockchainHelperService.getAmmContractHandler(market);
+    return this.blockchainHelperService.call(marketMakerContract, {
+      name: 'fee',
+      isView: true,
+    });
+  }
+
+  async getMarketFunding(market: PredictionMarket) {
+    const marketMakerContract =
+      this.blockchainHelperService.getAmmContractHandler(market);
+    const fundingInWei = await this.blockchainHelperService.call<bigint>(
+      marketMakerContract,
+      {
+        name: 'funding',
+        isView: true,
+      },
+    );
+    return (
+      await this.blockchainHelperService.toEthers(
+        fundingInWei,
+        market.collateralToken,
+      )
+    ).toNumber();
   }
 }
