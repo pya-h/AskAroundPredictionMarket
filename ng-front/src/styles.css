@@ -5,3 +5,62 @@
 * {
   transition: all 1s;
 }
+.list-hover:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+}
+
+/* Optional smoother transitions */
+.transition {
+  transition: all 0.2s ease-in-out;
+}
+.market-card {
+  background-color: #ffffff;
+  border: 1px solid #e9ecef;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+}
+
+.market-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  background-color: #f9f9f9;
+}
+
+.chevron-icon {
+  font-size: 1.25rem;
+  color: #6c757d;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.market-card:hover .chevron-icon {
+  opacity: 1;
+}
+
+.animate__animated {
+  animation-duration: 0.4s;
+}
+
+.badge {
+  font-size: 0.75rem;
+  padding: 0.4em 0.6em;
+  border-radius: 0.5rem;
+}
+
+.outcome-card {
+  border-radius: 1rem;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.outcome-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+.modal.fade.show {
+  background-color: rgba(0, 0, 0, 0.4);
+}

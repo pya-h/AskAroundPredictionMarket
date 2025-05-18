@@ -23,6 +23,11 @@
   gap: 10px;
 }
 
+.outcomes li:hover {
+  background-color: lightgreen;
+  border-radius: 10px;
+}
+
 .outcomes li {
   flex: 1;
   padding: 10px;

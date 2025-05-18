@@ -1,11 +1,58 @@
 <div class="container mt-5">
-  <h2 class="text-center">Open Prediction Markets <hr /></h2>
-  <div class="list-group">
+  <h2 class="text-center mb-4">
+    {{ justOngoing ? "Open" : "All" }} Prediction Markets
+    <hr class="w-25 mx-auto" />
+  </h2>
+
+  <!-- Market Cards List -->
+  <div class="d-flex flex-column gap-3">
+    <div
+      *ngFor="let market of markets; let i = index"
+      class="market-card animate__animated animate__fadeInUp"
+      [ngStyle]="{ 'animation-delay': i * 100 + 'ms' }"
+      (click)="openMarket(market.id)"
+    >
+      <div class="d-flex justify-content-between align-items-start">
+        <div>
+          <h5 class="mb-1 fw-semibold">{{ market.question }}</h5>
+          <div class="d-flex align-items-center gap-2 mt-1 flex-wrap">
+            <span class="badge bg-secondary text-white">{{
+              categories[market.categoryId] || "General"
+            }}</span>
+            <span
+              class="badge"
+              [ngClass]="{
+                'bg-success': market.status === 'ongoing',
+                'bg-danger': market.status === 'closed',
+                'bg-warning': market.status === 'resolved',
+
+              }"
+            >
+              {{ market.status | titlecase }}
+            </span>
+          </div>
+        </div>
+        <div class="chevron-icon">
+          <i class="bi bi-chevron-right"></i>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filter Button -->
+  <div class="text-center my-4">
     <button
-      *ngFor="let market of markets"
-      class="list-group-item list-group-item-action"
-      (click)="openMarket(market.id)">
-      {{ market.question }}
+      class="btn btn-outline-primary px-4 py-2 rounded-pill shadow-sm position-relative d-inline-flex align-items-center gap-2 transition"
+      [disabled]="isLoading"
+      (click)="triggerOngoing()"
+    >
+      <span
+        *ngIf="isLoading"
+        class="spinner-border spinner-border-sm text-primary"
+        role="status"
+        aria-hidden="true"
+      ></span>
+      {{ filterButtonText }}
     </button>
   </div>
 </div>

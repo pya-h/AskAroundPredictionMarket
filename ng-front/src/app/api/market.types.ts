@@ -17,6 +17,17 @@ export type MarketInfoType = {
 
 export type MarketPriceInfoType = MarketInfoType & { price: number };
 
-export type MarketBalanceInfoType = MarketInfoType & { balance: number | string | bigint };
+export type MarketBalanceInfoType = MarketInfoType & {
+  balance: number | string | bigint;
+};
 
-export type MarketParticipationInfoType = MarketInfoType & { participationPossibility: number };
+export type MarketParticipationInfoType = MarketInfoType & {
+  participationPossibility: number;
+};
+
+export type FaucetRequestInfoType = {
+  amount: number | bigint;
+  token: string;
+  balance: number | bigint;
+  receipt: Record<string, any>;
+};

@@ -33,7 +33,17 @@ export class MarketDetailComponent implements OnInit {
   }[] = [];
   successMessage: string | null = null;
   errorMessage: string | null = null;
+  infoMessage: string | null = null;
+
   userCollateralBalance: number | null = null;
+
+  private lastFaucetRequestAt: number | null = null;
+
+  get canRequestFaucet() {
+    return (
+      !this.lastFaucetRequestAt || this.lastFaucetRequestAt + 60000 < Date.now()
+    );
+  }
 
   openModal(outcomeIndex: number, type: string) {
     this.isModalOpen = true;
@@ -55,11 +65,6 @@ export class MarketDetailComponent implements OnInit {
     )
       return;
 
-    if (this.modalType === ModalTypesEnum.BUY) {
-      this.buyOutcome();
-    } else if (this.modalType === ModalTypesEnum.SELL) {
-      this.sellOutcome();
-    }
     switch (this.modalType) {
       case ModalTypesEnum.BUY:
         this.buyOutcome();
@@ -68,6 +73,7 @@ export class MarketDetailComponent implements OnInit {
         this.sellOutcome();
         break;
     }
+    this.infoMessage = 'Processing ...';
     this.closeModal();
   }
 
@@ -89,34 +95,32 @@ export class MarketDetailComponent implements OnInit {
             token: outcome,
             index: outcome.tokenIndex,
             title: outcome.predictionOutcome?.['title'],
-            price: 0.0,
+            price: this.market?.['statistics']?.[outcome.tokenIndex]?.['price'],
             balance: 0.0,
-            participationPossibility: 0.0,
+            participationPossibility:
+              this.market?.['statistics']?.[outcome.tokenIndex]?.[
+                'participationPossibility'
+              ],
           }));
+
+        this.marketService.getUserBalances(marketId).subscribe(
+          (response) => {
+            try {
+              this.updateOutcomeField<bigint>('balance', response.data);
+            } catch (ex) {
+              console.error(ex);
+            }
+          },
+          (error) => {
+            console.error('Error loading user outcome balances!', error);
+          }
+        );
       },
       (error) => {
         console.error('Error loading market', error);
+        this.error = error.error?.message || error.message;
       }
     );
-
-    this.marketService.getOutcomePrices(marketId).subscribe(
-      (response) => {
-        this.updateOutcomeField<number>('price', response.data);
-      },
-      (error) => {
-        console.error('Error loading market outcome prices!', error);
-      }
-    );
-
-    this.marketService.getUserBalances(marketId).subscribe(
-      (response) => {
-        this.updateOutcomeField<bigint>('balance', response.data);
-      },
-      (error) => {
-        console.error('Error loading user outcome balances!', error);
-      }
-    );
-
 
     this.marketService.getUserCollateralBalance(marketId).subscribe(
       (response) => {
@@ -124,18 +128,6 @@ export class MarketDetailComponent implements OnInit {
       },
       (error) => {
         console.error('Error loading user outcome balances!', error);
-      }
-    );
-
-    this.marketService.getParticipationStats(marketId).subscribe(
-      (response) => {
-        this.updateOutcomeField<number>(
-          'participationPossibility',
-          response.data
-        );
-      },
-      (error) => {
-        console.error('Error loading user outcome participation stats!', error);
       }
     );
   }
@@ -152,6 +144,7 @@ export class MarketDetailComponent implements OnInit {
   }
 
   set success(message: string) {
+    this.infoMessage = this.errorMessage = null;
     this.successMessage = message;
     setTimeout(() => {
       this.successMessage = null;
@@ -159,6 +152,7 @@ export class MarketDetailComponent implements OnInit {
   }
 
   set error(message: string) {
+    this.successMessage = this.infoMessage = null;
     this.errorMessage = message;
     setTimeout(() => {
       this.errorMessage = null;
@@ -174,8 +168,9 @@ export class MarketDetailComponent implements OnInit {
             this.success = 'Token Bought.';
             this.loadMarket();
           },
-          (error) => {
-            this.error = 'Failed to buy token: ' + error.message;
+          (err) => {
+            this.error =
+              'Failed to buy token: ' + (err.error?.message || err.message);
           }
         );
     }
@@ -190,9 +185,9 @@ export class MarketDetailComponent implements OnInit {
             this.success = 'Token Sold.';
             this.loadMarket();
           },
-          (error) => {
-            this.error = 'Failed to sell token: ' + error.message;
-            console.log(error);
+          (err) => {
+            this.error =
+              'Failed to sell token: ' + (err.error?.message || err.message);
           }
         );
     }
@@ -200,5 +195,24 @@ export class MarketDetailComponent implements OnInit {
 
   backToMarkets() {
     this.router.navigate(['/markets']);
+  }
+
+  requestFaucet() {
+    if (!this.canRequestFaucet) {
+      this.infoMessage = `You can perform faucet request after ${
+        60 - (((Date.now() - (this.lastFaucetRequestAt || 0)) / 1e3) | 0)
+      }`;
+      return;
+    }
+    this.marketService.requestFaucet().subscribe(
+      (response) => {
+        this.success = `Received ${response.data?.amount} ${response.data?.token}; Total = ${response.data?.balance} ${response.data?.token}`;
+        this.lastFaucetRequestAt = Date.now();
+      },
+      (err) => {
+        this.error = err.error?.message || err.message;
+      }
+    );
+    this.infoMessage = 'Processing ...';
   }
 }

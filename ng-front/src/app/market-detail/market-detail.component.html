@@ -1,64 +1,104 @@
-<div class="market-detail">
-  <h2 class="row">
-    <div class="col-2">
-      <button class="btn btn-secondary" (click)="backToMarkets()">Back</button>
-    </div>
-    <div class="col py-2">
-      {{ market["question"] }}
-    </div>
-  </h2>
-  <hr />
-  <ul class="outcomes row">
-    @for (outcome of outcomes; track $index) {
-    <div *ngIf="$index && (outcomes.length % 2 !== 0 || !($index % 2))">
-      <hr />
-    </div>
-    <li>
-      <div class="action-buttons">
-        <button class="btn btn-success" (click)="openModal($index, 'buy')">
-          Buy
-        </button>
-        <span>{{ outcome.title }}</span>
-        <button class="btn btn-danger" (click)="openModal($index, 'sell')">
-          Sell
-        </button>
-      </div>
-      <hr />
-      @for (stat of [{value: outcome.price, title: 'Price'}, {value:
-      outcome.balance, title: 'Your Balance'}, {value:
-      outcome.participationPossibility, title: 'Participation'}]; track $index)
-      {
-      <div class="outcome-details row">
-        <div class="col">{{ stat.title }}</div>
-        <p class="col text-center" style="font-weight: bolder">
-          {{ stat.value }}
-        </p>
-      </div>
-      }
-    </li>
-    }
-  </ul>
+<div class="container my-5 market-detail">
+  <!-- Market Header -->
   <div
-    class="badge bg-success bg-pill px-5 py-2 my-3 mx-auto"
-    *ngIf="successMessage"
+    class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3"
   >
-    {{ successMessage }}
-  </div>
-  <div
-    class="badge bg-danger bg-pill px-5 py-2 my-3 mx-auto"
-    *ngIf="errorMessage"
-  >
-    {{ errorMessage }}
+    <div class="d-flex align-items-center">
+      <button class="btn btn-outline-secondary" (click)="backToMarkets()">
+        <i class="bi bi-arrow-left"></i> Back
+      </button>
+    </div>
+    <div style="max-width: 500px">
+      <h2 class="text-center flex-grow-1 mb-0">{{ market["question"] }}</h2>
+    </div>
+
+    <div class="d-flex align-items-center">
+      <button class="btn btn-warning" (click)="requestFaucet()">
+        <i class="bi bi-cash-coin"></i> Faucet
+      </button>
+    </div>
   </div>
 
+  <hr />
+
+  <!-- Outcomes List -->
+  <div class="row gy-4">
+    <div class="col-md-6" *ngFor="let outcome of outcomes; let i = index">
+      <div
+        class="card shadow-sm outcome-card animate__animated animate__fadeInUp"
+        [ngStyle]="{ 'animation-delay': i * 100 + 'ms' }"
+      >
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <button class="btn btn-success" (click)="openModal(i, 'buy')">
+              Buy
+            </button>
+            <h5 class="mb-0 text-center flex-grow-1">{{ outcome.title }}</h5>
+            <button class="btn btn-danger" (click)="openModal(i, 'sell')">
+              Sell
+            </button>
+          </div>
+          <hr />
+          <div class="row">
+            <div class="row mb-2">
+              <div class="col">
+                <span class="text-muted">Price:</span>
+              </div>
+              <div class="col">
+                <span class="fw-bold">{{ outcome.price }}</span>
+              </div>
+            </div>
+            <div class="row mb-2">
+              <div class="col">
+                <span class="text-muted">Your Balance:</span>
+              </div>
+              <div class="col">
+                <span class="fw-bold">{{ outcome.balance }}</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="col">
+                <span class="text-muted">Participation:</span>
+              </div>
+
+              <div class="col">
+                <span class="fw-bold">{{
+                  outcome.participationPossibility
+                }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Messages -->
+  <div class="text-center mt-4">
+    <div
+      *ngIf="successMessage"
+      class="alert alert-success d-inline-block w-auto"
+    >
+      {{ successMessage }}
+    </div>
+    <div *ngIf="infoMessage" class="alert alert-info d-inline-block w-auto">
+      {{ infoMessage }}
+    </div>
+    <div *ngIf="errorMessage" class="alert alert-danger d-inline-block w-auto">
+      {{ errorMessage }}
+    </div>
+  </div>
+
+  <!-- Modal -->
   <div
-    class="modal"
+    class="modal fade show"
     tabindex="-1"
-    [class.show]="isModalOpen"
     style="display: block"
     *ngIf="isModalOpen"
   >
-    <div class="modal-dialog">
+    <div
+      class="modal-dialog modal-dialog-centered animate__animated animate__fadeInDown"
+    >
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title">{{ modalType | titlecase }} Outcome</h5>
@@ -70,42 +110,34 @@
         </div>
         <div class="modal-body">
           <form>
-            <div class="mb-3">
-              <label for="amount" class="form-label">Amount</label>
-              <input
-                type="number"
-                id="amount"
-                class="form-control"
-                [(ngModel)]="amount"
-                name="amount"
-              />
-            </div>
+            <label for="amount" class="form-label">Amount</label>
+            <input
+              type="number"
+              id="amount"
+              class="form-control"
+              [(ngModel)]="amount"
+              name="amount"
+            />
           </form>
         </div>
         <div class="modal-footer">
-          <button
-            type="button"
-            class="btn btn-primary"
-            (click)="confirmAction()"
-          >
+          <button class="btn btn-primary" (click)="confirmAction()">
             Confirm
           </button>
-          <button
-            type="button"
-            class="btn btn-secondary"
-            (click)="closeModal()"
-          >
+          <button class="btn btn-secondary" (click)="closeModal()">
             Cancel
           </button>
         </div>
       </div>
     </div>
   </div>
+
+  <!-- User Balance -->
   <hr />
-  <div class="row">
-    <div class="col mx-auto py-2 badge bg-primary badge-pill" style="font-size: 100%;" *ngIf="userCollateralBalance != null">
-      User's {{ market["collateralToken"]?.name }} Balance:
-      <span class="text-warning">{{ userCollateralBalance }}</span>
-    </div>
+  <div class="text-center mt-4" *ngIf="userCollateralBalance != null">
+    <span class="badge bg-primary fs-6 px-4 py-2">
+      Your {{ market["collateralToken"]?.name }} Balance:
+      <span class="fw-bold text-warning ms-2">{{ userCollateralBalance }}</span>
+    </span>
   </div>
 </div>
