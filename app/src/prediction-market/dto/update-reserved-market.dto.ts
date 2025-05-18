@@ -105,4 +105,14 @@ export class UpdateReservedPredictionMarketDto extends OmitType(
   })
   @IsOptional()
   reference?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Priority of the market; Increasing this value means the market is more important than markets with lesser priorities.',
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  priority?: number;
 }

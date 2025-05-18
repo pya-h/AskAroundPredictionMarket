@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Delete,
   Get,
@@ -34,6 +35,8 @@ import { UpdatePredictionMarketCategoryDto } from './dto/update-category-data.dt
 import { NoPersonalUserDataInterceptor } from '../core/interceptors/serialize-user-data.interceptor';
 import { ApiStandardOkResponse } from '../core/decorators/api-standard-ok-response.decorator';
 import {
+  OutcomeStatistics,
+  OutcomeStatisticsWithParticipants,
   PredictionMarketExtraDto,
   PredictionMarketExtraWithExtraStatisticsDto,
   UserMarketsListResponseDto,
@@ -44,7 +47,7 @@ import { TransactionReceiptDto } from '../blockchain-core/dtos/response/transact
 import {
   OutcomeTokenBalanceInfo,
   OutcomeTokenParticipationInfo,
-  OutcomeTokenPriceInfo,
+  OutcomeTokenPriceAndParticipantsInfo,
 } from './dto/responses/outcome-token-stats.dtos';
 import { HideBlockchainWalletsPrivateData } from '../blockchain-core/interceptors/hide-wallet-private-info.interceptor';
 import {
@@ -72,10 +75,17 @@ import { UpdatePredictionMarketDto } from './dto/update-market.dto';
 import { PredictionMarket } from './entities/market.entity';
 import { OutcomeTradeResponseDto } from './dto/responses/outcome-trade-response.dto';
 import { GetUserMarketsDto } from './dto/get-user-markets.dto';
+import { PredictionMarketTradeModesEnum } from './enums/market-participation.enums';
+import { GetConditionalTokensPossibilityQuery } from './dto/get-outcomes-popularity.dto';
+import { OutcomePossibilityBasisEnum } from './enums/outcome-popularity-basis.enum';
+import { FindMarketOrOutcomeParticipantsDto } from './dto/find-participants.dto';
+import { SendGlobalMarketNotificationDto } from './dto/send-global-market-notification.dto';
+import { PredictionMarketFeeCollectionResultDto } from './dto/responses/manual-fee-collection.dto';
+import { ChangePredictionMarketLiquidityDto } from './dto/change-liquidity.dto copy';
 import { AuthGuard } from '../user/guards/auth.guard';
-import { CurrentUser } from '../user/decorators/current-user.decorator';
+import { CurrentUser } from 'src/user/decorators/current-user.decorator';
 
-@ApiTags('Prediction Market')
+@ApiTags('Omen Arena', 'Prediction Market')
 @ApiSecurity('X-Api-Key')
 @Controller('prediction-market')
 export class PredictionMarketController {
@@ -243,44 +253,48 @@ export class PredictionMarketController {
   @HideBlockchainWalletsPrivateData('oracle', 'account')
   async getMarkets(@Query() marketFeatures?: GetMarketsQuery) {
     const minioCache = { categories: {} };
-    return (
-      await Promise.all(
-        (
-          await this.predictionMarketService.findMarkets(
-            marketFeatures,
-            'outcomeTokens',
-            'creator',
-            'oracle',
-          )
-        ).map(async (market) => {
-          if (minioCache.categories[market.categoryId]) {
-            market.category.icon = minioCache.categories[market.categoryId];
-          }
 
-          await this.predictionMarketService.syncMinioUrls<PredictionMarket>(
-            market,
-            {
-              loadCategoryIcon: !minioCache.categories[market.categoryId],
-            },
-          );
+    if (!('prioritized' in marketFeatures)) {
+      marketFeatures.prioritized = true; // markets are prioritized by default in GET endpoint
+    }
+    return Promise.all(
+      (
+        await this.predictionMarketService.findMarkets(
+          marketFeatures,
+          'outcomeTokens',
+          'creator',
+          'oracle',
+        )
+      ).map(async (market) => {
+        if (minioCache.categories[market.categoryId]) {
+          market.category.icon = minioCache.categories[market.categoryId];
+        }
 
-          if (
-            market.category?.icon &&
-            !minioCache.categories[market.categoryId]
-          ) {
-            minioCache.categories[market.categoryId] = market.category.icon;
-          }
+        const [, marketState, oraclePool] = await Promise.all([
+          this.predictionMarketService.syncMinioUrls<PredictionMarket>(market, {
+            loadCategoryIcon: !minioCache.categories[market.categoryId],
+          }),
+          this.predictionMarketService.getMarketOutcomeState(market),
+          this.predictionMarketService.getMarketTotalCollateralPool(market.id),
+        ]);
 
-          return market;
-        }),
-      )
-    ).map((market) => ({
-      ...market,
-      statistics: market.statistics,
-      totalInvestment: market.totalInvestment,
-      status: market.status,
-      isReserved: false,
-    }));
+        if (
+          market.category?.icon &&
+          !minioCache.categories[market.categoryId]
+        ) {
+          minioCache.categories[market.categoryId] = market.category.icon;
+        }
+
+        return {
+          ...market,
+          statistics: marketState as OutcomeStatistics[],
+          oraclePool,
+          totalInvestment: market.totalInvestment,
+          status: market.status,
+          isReserved: false,
+        };
+      }),
+    );
   }
 
   @UseGuards(AuthGuard)
@@ -293,6 +307,9 @@ export class PredictionMarketController {
   @NoPersonalUserDataInterceptor('creator')
   @HideBlockchainWalletsPrivateData('oracle', 'account')
   async getReservedMarkets(@Query() marketFeatures?: GetReservedMarketsQuery) {
+    if (!('prioritized' in marketFeatures)) {
+      marketFeatures.prioritized = true; // markets are prioritized by default in GET endpoint
+    }
     const reservedMarkets = await Promise.all(
       await this.predictionMarketService.findReservedPredictionMarkets(
         marketFeatures,
@@ -322,6 +339,7 @@ export class PredictionMarketController {
         ) {
           minioCache.categories[market.categoryId] = market.category.icon;
         }
+
         return reservedMarkets;
       }),
     );
@@ -462,18 +480,28 @@ export class PredictionMarketController {
       'Get the prices of conditional tokens in a market; It returns a numeric string if you specify outcome in query param.',
   })
   @ApiBearerAuth()
-  @ApiStandardOkResponse([OutcomeTokenPriceInfo])
+  @ApiStandardOkResponse([OutcomeTokenPriceAndParticipantsInfo])
   @Get(':id/ctf/price')
   getConditionalTokenPrices(
     @Param('id', ParseIntPipe) marketId: string,
-    @Query() { outcome, amount = '1' }: GetConditionalTokenPriceQuery,
+    @Query()
+    {
+      outcome,
+      amount = '1',
+      mode = PredictionMarketTradeModesEnum.BUY,
+    }: GetConditionalTokenPriceQuery,
   ) {
+    const amountCoefficient =
+      this.predictionMarketService.getTradeModeCoefficient(mode);
     return !outcome
-      ? this.predictionMarketService.getAllOutcomesPrices(+marketId, +amount)
+      ? this.predictionMarketService.getAllOutcomesPrices(
+          +marketId,
+          +amount * amountCoefficient,
+        )
       : this.predictionMarketService.getSingleOutcomePrice(
           +marketId,
           +outcome,
-          +amount,
+          +amount * amountCoefficient,
         );
   }
 
@@ -483,7 +511,7 @@ export class PredictionMarketController {
       'Get the marginal prices of conditional tokens in a market; It returns a numeric string if you specify outcome in query param.',
   })
   @ApiBearerAuth()
-  @ApiStandardOkResponse([OutcomeTokenPriceInfo])
+  @ApiStandardOkResponse([OutcomeTokenPriceAndParticipantsInfo])
   @Get(':id/ctf/marginal-price')
   getConditionalTokenMarginalPrice(
     @Param('id', ParseIntPipe) marketId: string,
@@ -503,10 +531,17 @@ export class PredictionMarketController {
   })
   @ApiBearerAuth()
   @ApiStandardOkResponse([OutcomeTokenParticipationInfo])
-  @Get(':id/ctf/stats')
-  getConditionalTokensStatus(@Param('id', ParseIntPipe) marketId: string) {
-    return this.predictionMarketService.getMarketParticipationStatistics(
+  @Get(':id/ctf/possibility')
+  getConditionalTokensPossibility(
+    @Param('id', ParseIntPipe) marketId: string,
+    @Query()
+    {
+      basis = OutcomePossibilityBasisEnum.PRICE,
+    }: GetConditionalTokensPossibilityQuery,
+  ) {
+    return this.predictionMarketService.getMarketOutcomesPossibility(
       +marketId,
+      basis,
     );
   }
 
@@ -581,6 +616,26 @@ export class PredictionMarketController {
       user.id,
       getUserMarketsDto,
     );
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiOperation({
+    description:
+      "Endpoint for users with nothing to claim, to announce that they have seen the market's final result.",
+  })
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiStandardOkResponse('string', { default: 'OK' })
+  @Post('my-markets/:id/results-seen')
+  async setMarketViewResultStatusAsSeen(
+    @CurrentUser() user: User,
+    @Param('id', ParseIntPipe) marketId: string,
+  ) {
+    await this.predictionMarketService.setMarketViewResultStatusAsSeen(
+      user.id,
+      +marketId,
+    );
+    return 'OK';
   }
 
   @UseGuards(AuthGuard)
@@ -662,20 +717,57 @@ export class PredictionMarketController {
 
   @UseGuards(AuthGuard)
   @ApiOperation({
-    description:
-      "Get user's balance of conditional tokens in a market; It returns a numeric string if you specify outcome in query param.",
+    description: `Get how much of a token user can buy/sell with the specific amount of payment.
+      Notice: The result of this endpoint in sell mode, is how much outcome is required to cost equally to the payment amount;
+      Notice: In sell mode, endpoint returns null when the payment results in amount more than the actual sellable amount (sum of all amounts in users possession);
+        So when sell mode returns null, it means users could not sell such amount at all, even if they had all sold outcomes in their possession;
+        There is no such rule in buy mode.`,
   })
   @ApiBearerAuth()
   @ApiStandardOkResponse('number')
   @Get(':id/ctf/whatuget')
   async whatYouGet(
     @Param('id', ParseIntPipe) marketId: string,
-    @Query() { outcome, payment }: WhatYouGetQuery,
-  ) {
-    return this.predictionMarketService.calculatePurchasableTokens(
-      +marketId,
+    @Query()
+    {
       outcome,
       payment,
+      mode = PredictionMarketTradeModesEnum.BUY,
+    }: WhatYouGetQuery,
+  ) {
+    const { amount } =
+      await this.predictionMarketService.calculatePurchasableTokens(
+        +marketId,
+        outcome,
+        payment * this.predictionMarketService.getTradeModeCoefficient(mode),
+      );
+    if (amount == null) {
+      if (mode === PredictionMarketTradeModesEnum.SELL) {
+        throw new BadRequestException(
+          'The result exceeds the actual sellable amount of this outcome, in whole market!',
+        );
+      }
+      throw new ConflictException('Something went wrong during calculation!');
+    }
+    return Math.abs(amount);
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiOperation({
+    description: 'Get the list of participants in a market.',
+  })
+  @ApiBearerAuth()
+  @NoPersonalUserDataInterceptor()
+  @ApiStandardOkResponse([User])
+  @Get(':id/participants')
+  async findMarketParticipants(
+    @Param('id', ParseIntPipe) marketId: string,
+    @Query() findParticipantsOptions: FindMarketOrOutcomeParticipantsDto,
+  ) {
+    return this.predictionMarketService.findParticipants(
+      +marketId,
+      'market',
+      findParticipantsOptions,
     );
   }
 
@@ -691,6 +783,25 @@ export class PredictionMarketController {
     @Param('id', ParseIntPipe) marketId: string,
   ) {
     return this.predictionMarketService.forceCloseMarket(user, +marketId);
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiOperation({
+    description: 'Provide extra liquidity for the market, or decrease it.',
+  })
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @Post(':id/change-liquidity')
+  changeLiquidity(
+    @CurrentUser() user: User,
+    @Param('id', ParseIntPipe) marketId: string,
+    @Body() { amount }: ChangePredictionMarketLiquidityDto,
+  ) {
+    return this.predictionMarketService.changeMarketLiquidity(
+      user,
+      +marketId,
+      amount,
+    );
   }
 
   @UseGuards(AuthGuard)
@@ -730,6 +841,28 @@ export class PredictionMarketController {
 
   @UseGuards(AuthGuard)
   @ApiOperation({
+    description:
+      'Manually collect market fees, collected from last fee withdraw up until now.',
+  })
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiStandardOkResponse(PredictionMarketFeeCollectionResultDto)
+  @Post(':id/collect-fees')
+  async manuallyCollectFee(
+    @CurrentUser() user: User,
+    @Param('id', ParseIntPipe) marketId: string,
+  ) {
+    const { result, feePercent, tx } =
+      await this.predictionMarketService.collectMarketFees(user, +marketId);
+    return {
+      result,
+      feePercent,
+      tx: tx ? { ...tx, blockNumber: tx.blockNumber.toString() } : null, // due to unable to convert BigInt while Jsonifying
+    };
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiOperation({
     description: 'Manually close and resolve a market.',
   })
   @ApiBearerAuth()
@@ -762,7 +895,7 @@ export class PredictionMarketController {
         ),
       ),
       this.predictionMarketService.getNumberOfParticipants(marketId, 'market'),
-      this.predictionMarketService.getMarketTotalOraclePool(marketId),
+      this.predictionMarketService.getMarketTotalCollateralPool(marketId),
     ]);
     return {
       ...market,
@@ -771,17 +904,38 @@ export class PredictionMarketController {
       status: market.status,
       totalInvestment: market.totalInvestment,
       oraclePool,
-      statistics: await Promise.all(
-        market.statistics?.map(async (outcome) => ({
-          ...outcome,
-          participants:
-            await this.predictionMarketService.getNumberOfParticipants(
-              outcome.id,
-              'outcome',
-            ),
-        })),
-      ),
+      statistics: (await this.predictionMarketService.getMarketOutcomeState(
+        market,
+        { appendParticipantsData: true },
+      )) as OutcomeStatisticsWithParticipants[],
     };
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiOperation({
+    description:
+      'If not sure what priority value must be set to pin a market using patch-market endpoint, use this endpoint.',
+  })
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiStandardOkResponse('string')
+  @Patch(':id/pin')
+  async pinMarket(@Param('id', ParseIntPipe) marketId: string) {
+    await this.predictionMarketService.pinMarket(+marketId);
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiOperation({
+    description: 'shortcut endpoint for unpinning a market.',
+  })
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiStandardOkResponse('string')
+  @Patch(':id/unpin')
+  async unpinMarket(@Param('id', ParseIntPipe) marketId: string) {
+    await this.predictionMarketService.updatePredictionMarketData(+marketId, {
+      priority: 1,
+    });
   }
 
   @UseGuards(AuthGuard)
@@ -813,5 +967,20 @@ export class PredictionMarketController {
   async deletePredictionMarket(@Param('id', ParseIntPipe) id: string) {
     await this.predictionMarketService.softRemovePredictionMarket(+id);
     return 'OK';
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiOperation({
+    description:
+      'Admins can use this endpoint to send all users (those with settings enabled) regarding prediction market state changes, such as a new market availability or resolution;.',
+  })
+  @ApiBearerAuth()
+  @Post('inform')
+  sendGlobalMarketNotification(
+    @Body() informData: SendGlobalMarketNotificationDto,
+  ) {
+    return this.predictionMarketService.sendGlobalMarketNotification(
+      informData,
+    );
   }
 }

@@ -26,7 +26,6 @@ export class ContractEntity extends BaseEntity {
   address: string;
 
   @ApiProperty({
-    type: 'json',
     description:
       'Contract ABI; Required so server can interact it in blockchain.',
     isArray: true,

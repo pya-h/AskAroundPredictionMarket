@@ -2,15 +2,18 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   LoggerService,
   MethodNotAllowedException,
   NotFoundException,
   NotImplementedException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { PredictionMarket } from './entities/market.entity';
 import {
+  Between,
   FindOptionsOrder,
   FindOptionsRelations,
   FindOptionsWhere,
@@ -56,7 +59,11 @@ import {
 import { TotalPerOutcomeTradeStatisticsDto } from './dto/responses/total-trade-statistics.dto';
 import { MarketEconomicConstants } from '../core/constants/constants';
 import { MinioService } from '../minio/minio.service';
-import { PredictionMarketEntityWithParticipantsCount } from './dto/responses/prediction-market-extra.dto';
+import {
+  OutcomeStatistics,
+  OutcomeStatisticsWithParticipants,
+  PredictionMarketEntityWithParticipantsCount,
+} from './dto/responses/prediction-market-extra.dto';
 import { BasePredictionMarket } from './entities/bases/base-market.entity';
 import { BaseConditionalToken } from './entities/bases/base-conditional-token.entity';
 import { GetReservedMarketsQuery } from './dto/get-reserved-markets.dto';
@@ -68,9 +75,23 @@ import { approximate } from '../core/utils/calculus';
 import { PayoutRedemptionEventDataType } from '../blockchain-indexer/types/payout-redemption-data.copy';
 import { RedeemHistory } from './entities/redeem-history.entity';
 import { GetUserMarketsDto } from './dto/get-user-markets.dto';
+import BigNumber from 'bignumber.js';
+import { OutcomePossibilityBasisEnum } from './enums/outcome-popularity-basis.enum';
+import { OutcomeTokenParticipationInfo } from './dto/responses/outcome-token-stats.dtos';
+import { WebPushNotificationService } from '../notification/web-push-notification.service';
+import {
+  GlobalPredictionMarketNotificationTypes,
+  SendGlobalMarketNotificationDto,
+} from './dto/send-global-market-notification.dto';
+import { truncateString } from '../core/utils/strings';
+import { AmmMarketPriceCacheType } from './types/amm-price-cache.type';
+import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
 
 @Injectable()
-export class PredictionMarketService {
+export class PredictionMarketService implements OnModuleInit {
+  public static marketsCheckoutIntervalInMinutes: number = 10;
+  public static hoursRemainingToMarketClosureReminder: number = 1;
+
   constructor(
     @InjectRepository(PredictionMarket)
     private readonly predictionMarketRepository: Repository<PredictionMarket>,
@@ -98,8 +119,18 @@ export class PredictionMarketService {
     private readonly loggerService: LoggerService,
     private readonly userService: UserService,
     private readonly minioService: MinioService,
+    private readonly webPushNotificationService: WebPushNotificationService,
+    @Inject(CACHE_MANAGER) private readonly cacheService: Cache,
   ) {}
 
+  onModuleInit() {
+    this.periodicUpdateOngoingMarketPriceCaches().catch((ex) =>
+      this.loggerService.error(
+        'Periodic AMM price caching processor failed to cache ongoing markets prices at startup.',
+        ex as Error,
+      ),
+    );
+  }
   async getOracle(
     oracleId: number = 0,
     {
@@ -367,6 +398,7 @@ export class PredictionMarketService {
       baseOutcomes,
       baseMarket.initialLiquidity,
       baseMarket.oracle,
+      baseMarket.fee,
     );
 
     if (
@@ -417,9 +449,57 @@ export class PredictionMarketService {
         baseOutcomes.map((ct) => ct.predictionOutcome),
       ),
     ]);
+    market.outcomeTokens = conditionalTokens;
 
+    this.cacheOngoingMarketPrices(market);
+    this.webPushNotificationService
+      .pushCheckoutPredictionMarketToSubscribers(market, {
+        newPredictionMarket: true,
+      })
+      .catch((ex) =>
+        this.loggerService.error(
+          'Panic at New Prediction Market web push: ',
+          ex,
+          { data: { marketId: market.id, question: market.question } },
+        ),
+      );
     await this.basePredictionMarketRepository.delete({ id: reservedMarketId });
     return market;
+  }
+
+  async sendGlobalMarketNotification({
+    marketId,
+    type = GlobalPredictionMarketNotificationTypes.NEW_MARKET,
+  }: SendGlobalMarketNotificationDto) {
+    const market = await this.getMarket(marketId, 'outcomeTokens');
+
+    switch (type) {
+      case GlobalPredictionMarketNotificationTypes.NEW_MARKET:
+        await this.webPushNotificationService.pushCheckoutPredictionMarketToSubscribers(
+          market,
+          { newPredictionMarket: true },
+        );
+        break;
+      case GlobalPredictionMarketNotificationTypes.MARKET_SOON_CLOSES:
+        await this.webPushNotificationService.pushCheckoutPredictionMarketToSubscribers(
+          market,
+          { predictionMarketClosingSoon: true },
+          '⚠️ This Market Will Close Soon...',
+        );
+        break;
+      case GlobalPredictionMarketNotificationTypes.MARKET_RESOLVED:
+        const participants: User[] = await this.findParticipants(
+          market.id,
+          'market',
+        );
+        await this.webPushNotificationService.pushPredictionMarketIsResolvedToParticipants(
+          market,
+          participants,
+        );
+        break;
+      default:
+        throw new NotImplementedException();
+    }
   }
 
   async createNewMarket(
@@ -437,6 +517,7 @@ export class PredictionMarketService {
       reference?: string;
       oracleId?: number;
       collateralToken?: CryptoTokenEnum;
+      fee?: number;
     },
   ) {
     if (await this.isQuestionRepetitive(question))
@@ -503,6 +584,11 @@ export class PredictionMarketService {
       );
     }
 
+    if (extraInfo.fee < 0 || extraInfo.fee >= 100) {
+      throw new BadRequestException(
+        'Invalid fee! supported range for fee is [0-100)',
+      );
+    }
     const reservedMarket: BasePredictionMarket =
       await this.basePredictionMarketRepository.save(
         this.basePredictionMarketRepository.create({
@@ -522,6 +608,7 @@ export class PredictionMarketService {
           reference: extraInfo.reference,
           subject: extraInfo.subject,
           description: extraInfo.description,
+          fee: (extraInfo.fee ?? 0) / 100.0,
         }),
       );
 
@@ -567,6 +654,7 @@ export class PredictionMarketService {
       collectionId,
       marketId: market.id,
       predictionOutcomeId: relatedPredictionOutcome.id,
+      predictionOutcome: relatedPredictionOutcome,
       tokenIndex,
       description: description,
     });
@@ -628,6 +716,45 @@ export class PredictionMarketService {
     );
   }
 
+  async findParticipants(
+    id: number,
+    participationTargetType: 'market' | 'outcome' = 'market',
+    {
+      take = null,
+      skip = null,
+      outcome = null, // Only set when participationTargetType=='market', then function will find outcome id by itself; o.w. 'id' arg's the outcomeId itself
+    }: { skip?: number; take?: number; outcome?: number } = {},
+  ) {
+    let targetFieldName = `${participationTargetType}_id`;
+    if (outcome != null && participationTargetType === 'market') {
+      const market = await this.getMarket(id, 'outcomeTokens');
+      id = market.outcomeTokens.find(
+        (token) => token.tokenIndex === outcome,
+      )?.id; // now the market id argument is converted to outcome id.
+      if (id == null) {
+        throw new NotFoundException('Outcome not found!');
+      }
+      targetFieldName = 'outcome_id';
+    }
+    const query = this.predictionMarketParticipationRepository
+      .createQueryBuilder('pmp')
+      .innerJoinAndSelect('pmp.user', 'user')
+      .select('DISTINCT user.id')
+      .where(`pmp.${targetFieldName} = :${targetFieldName}`, {
+        [targetFieldName]: id,
+      });
+    if (take) {
+      query.limit(+take);
+    }
+    if (skip) {
+      query.offset(+skip);
+    }
+
+    return this.userService.findBatch(
+      (await query.getRawMany()).map((item) => +item?.id),
+    );
+  }
+
   async findMarkets(
     {
       take,
@@ -638,18 +765,19 @@ export class PredictionMarketService {
       creator,
       sort = PredictionMarketSortOptionsDto.CREATION_DATE,
       descending = false,
+      prioritized = false,
     }: GetMarketsQuery = {},
     ...relations: string[]
   ) {
     const mainFilters: FindOptionsWhere<PredictionMarket> = {};
     switch (status) {
       case PredictionMarketStatusEnum.ONGOING.toString():
-        mainFilters.closedAt = null;
+        mainFilters.closedAt = IsNull();
         break;
       case PredictionMarketStatusEnum.RESOLVED.toString():
-        mainFilters.resolvedAt = Not(null);
+        mainFilters.resolvedAt = Not(IsNull());
       case PredictionMarketStatusEnum.CLOSED.toString():
-        mainFilters.closedAt = Not(null);
+        mainFilters.closedAt = Not(IsNull());
         break;
     }
 
@@ -670,6 +798,7 @@ export class PredictionMarketService {
         [PredictionMarketSortOptionsDto.OUTCOMES_INDEX]: 'outcomeTokens',
       }[sort || PredictionMarketSortOptionsDto.CREATION_DATE];
       sortOptions.order = {
+        ...(prioritized ? { priority: 'DESC' } : {}),
         [orderField]:
           orderField !== 'outcomeTokens'
             ? descending
@@ -721,7 +850,6 @@ export class PredictionMarketService {
         return markets.slice(skip, take);
       }
     }
-
     return markets;
   }
 
@@ -740,7 +868,9 @@ export class PredictionMarketService {
         : {}),
     });
 
-    if (!market) throw new NotFoundException('Market not found!');
+    if (!market) {
+      throw new NotFoundException('Market not found!');
+    }
     return market;
   }
 
@@ -798,7 +928,10 @@ export class PredictionMarketService {
     id: number,
     updatedFieldsData: UpdatePredictionMarketDto,
   ) {
-    const market = await this.getMarket(id);
+    const market = await this.getMarket(
+      id,
+      ...(updatedFieldsData?.fee != null ? ['ammFactory'] : []),
+    );
 
     if (
       updatedFieldsData.creatorId != null &&
@@ -824,10 +957,36 @@ export class PredictionMarketService {
       delete updatedFieldsData.resolveAt;
     }
 
+    if (updatedFieldsData.fee != null) {
+      updatedFieldsData.fee /= 100.0;
+      if (updatedFieldsData.fee < 0 || updatedFieldsData.fee >= 100) {
+        throw new BadRequestException(
+          'Invalid fee! supported range for fee is [0-100)',
+        );
+      }
+    }
+    if (market.fee !== updatedFieldsData.fee) {
+      await this.predictionMarketContractsService.changeMarketFeeRatio(
+        market,
+        updatedFieldsData.fee,
+      );
+    }
     Object.assign(mappedFields, updatedFieldsData);
     Object.assign(market, mappedFields);
 
     return this.predictionMarketRepository.save(market);
+  }
+
+  async pinMarket(id: number) {
+    await this.predictionMarketRepository
+      .createQueryBuilder('pm')
+      .update()
+      .set({
+        priority: () =>
+          `(SELECT COALESCE(MAX(priority), 1) + 1 FROM prediction_market WHERE id != ${id})`,
+      })
+      .where('id = :id', { id })
+      .execute();
   }
 
   async softRemovePredictionMarket(id: number) {
@@ -853,6 +1012,7 @@ export class PredictionMarketService {
       sort = ReservedPredictionMarketSortOptionsDto.START_DATE,
       descending = false,
       willStartBefore = null,
+      prioritized = false,
     }: GetReservedMarketsQuery = {},
     ...relations: string[]
   ) {
@@ -876,6 +1036,7 @@ export class PredictionMarketService {
         ...(subject ? { subject: ILike(subject) } : {}),
       },
       order: {
+        ...(prioritized ? { priority: 'DESC' } : {}),
         [orderField]: descending ? 'DESC' : 'ASC',
       },
       ...(take ? { take: +take } : {}),
@@ -1043,6 +1204,14 @@ export class PredictionMarketService {
       delete updatedFieldsData.outcomes;
     }
 
+    if (updatedFieldsData.fee != null) {
+      updatedFieldsData.fee /= 100.0;
+      if (updatedFieldsData.fee < 0 || updatedFieldsData.fee >= 100) {
+        throw new BadRequestException(
+          `Invalid fee! supported range for fee is [0-100)`,
+        );
+      }
+    }
     Object.assign(mappedFields, updatedFieldsData);
     Object.assign(reservedMarket, mappedFields);
     await this.basePredictionMarketRepository.save(
@@ -1086,7 +1255,7 @@ export class PredictionMarketService {
       return null;
     }
     outcome.predictionOutcome = await this.getSinglePredictionOutcomeInstance({
-      title: outcome.predictionOutcome.title,
+      title: outcome.title,
       icon: iconFilename,
     }); // The reason were not directly updating outcome.predictionOutcome.icon is because that PredictionOutcome instance is used in other conditional tokens.
 
@@ -1135,25 +1304,22 @@ export class PredictionMarketService {
       throw new BadRequestException(
         'You must either specify outcome amount or payment amount',
       );
-    const market = await this.getMarket(
-      marketId,
-      'outcomeTokens',
-      'ammFactory',
-    ); // Also collateral token which is set 'eager', if you intend to disable the eager option, you should add it here.
+    const market = await this.getMarket(marketId, 'outcomeTokens'); // Also collateral token which is set 'eager', if you intend to disable the eager option, you should add it here.
     if (market.closedAt)
       throw new BadRequestException('This market is closed!');
     if (outcomeIndex >= market.numberOfOutcomes)
       throw new BadRequestException('You have selected an invalid outcome.');
 
     if (payment) {
-      amount = await this.calculatePurchasableTokens(
+      ({ payment, amount } = await this.calculatePurchasableTokens(
         market,
         outcomeIndex,
         !isSelling ? payment : -payment,
-      );
+      ));
     } else if (isSelling) {
       amount *= -1;
     }
+
     return {
       amount: Math.abs(amount),
       receipt: await this.predictionMarketContractsService.trade(
@@ -1170,17 +1336,17 @@ export class PredictionMarketService {
     marketId: number,
     outcomeIndex: number,
     paymentAmount: number,
-  ): Promise<number>;
+  ): Promise<{ payment: number; amount: number }>;
   async calculatePurchasableTokens(
     market: PredictionMarket,
     outcomeIndex: number,
     paymentAmount: number,
-  ): Promise<number>;
+  ): Promise<{ payment: number; amount: number }>;
   async calculatePurchasableTokens(
     marketIdent: PredictionMarket | number,
     outcomeIndex: number,
     paymentAmount: number,
-  ): Promise<number> {
+  ): Promise<{ payment: number; amount: number }> {
     const market =
       typeof marketIdent === 'number'
         ? await this.getMarket(marketIdent, 'ammFactory', 'outcomeTokens')
@@ -1208,29 +1374,39 @@ export class PredictionMarketService {
   async calculateLmsrPurchasableTokens(
     market: PredictionMarket,
     outcomeIndex: number,
-    paymentAmount: number,
+    payment: number,
     cutPrecision = 2, // in digits.
-  ): Promise<number> {
+  ): Promise<{ payment: number; amount: number }> {
+    let actualPayment = payment;
     if (MarketEconomicConstants.TRADE_SLIPPAGE) {
-      paymentAmount -= paymentAmount * MarketEconomicConstants.TRADE_SLIPPAGE;
+      actualPayment -= actualPayment * MarketEconomicConstants.TRADE_SLIPPAGE;
     }
-    const b = market.initialLiquidity / Math.log(market.numberOfOutcomes);
+    if (market.fee) {
+      if (payment >= 0) {
+        actualPayment /= 1 + market.fee;
+      } else {
+        actualPayment = payment = payment / (1 - market.fee);
+      }
+    }
+    const marketLiquidity =
+      await this.predictionMarketContractsService.getMarketFunding(market);
+    const b = marketLiquidity / Math.log(market.numberOfOutcomes);
     const exp = (val: number) => Math.exp(val / b);
 
     const currentShares = market.outcomeTokens.map((t) => t.amountInvested);
     const sumExpQ = currentShares.reduce((sum, q) => sum + exp(q), 0);
     const currentCost = b * Math.log(sumExpQ);
 
-    const newCost = currentCost + paymentAmount;
+    const newCost = currentCost + actualPayment;
     const sumExpOthers = sumExpQ - exp(currentShares[outcomeIndex]);
     const newExpQi = Math.exp(newCost / b) - sumExpOthers;
 
     const deltaQi = b * Math.log(newExpQi) - currentShares[outcomeIndex];
 
     if (cutPrecision) {
-      return approximate(deltaQi, 'floor', cutPrecision);
+      return { payment, amount: approximate(deltaQi, 'floor', cutPrecision) };
     }
-    return deltaQi;
+    return { payment, amount: deltaQi };
   }
 
   async calculateFpmmPurchasableTokens(
@@ -1238,11 +1414,14 @@ export class PredictionMarketService {
     outcomeIndex: number,
     paymentAmount: number,
   ) {
+    // TODO: Add fee effect
     const outcomePrice = await this.getSingleOutcomePrice(market, outcomeIndex);
-    return (
-      paymentAmount /
-      Math.min(outcomePrice + MarketEconomicConstants.TRADE_SLIPPAGE, 1.0)
-    );
+    return {
+      payment: paymentAmount,
+      amount:
+        paymentAmount /
+        Math.min(outcomePrice + MarketEconomicConstants.TRADE_SLIPPAGE, 1.0),
+    };
   }
 
   async getConditionalTokenBalance(
@@ -1272,7 +1451,7 @@ export class PredictionMarketService {
     );
     return market.outcomeTokens.map((token, i) => ({
       id: token.id,
-      outcome: token.predictionOutcome.title,
+      outcome: token.title,
       index: token.tokenIndex,
       balance: balances[i],
       token,
@@ -1295,7 +1474,7 @@ export class PredictionMarketService {
     try {
       const market =
         typeof marketIdentity === 'number'
-          ? await this.getMarket(marketIdentity, 'ammFactory')
+          ? await this.getMarket(marketIdentity, 'ammFactory', 'outcomeTokens')
           : marketIdentity;
       const balancesOrdered = await Promise.all(
         market.outcomeTokens.map((token) =>
@@ -1313,7 +1492,6 @@ export class PredictionMarketService {
         )
       ).toNumber();
     } catch (ex) {
-      // FIXME: This method works correct for 99% of markets but throws strange error on some minors; Debug it.
       this.loggerService.error(
         `Failed calculating total oracle pool for market`,
         ex as Error,
@@ -1336,7 +1514,7 @@ export class PredictionMarketService {
     );
     return market.outcomeTokens.map((token, i) => ({
       id: token.id,
-      outcome: token.predictionOutcome.title,
+      outcome: token.title,
       index: token.tokenIndex,
       balance: balances[i],
       token,
@@ -1348,11 +1526,17 @@ export class PredictionMarketService {
     marketId: number,
   ) {
     const market = await this.getMarket(marketId);
-    return this.blockchainWalletService.getBalance(
-      userId,
-      market.collateralToken,
-      market.chainId,
-    );
+    return (
+      await this.blockchainWalletService.getBalance(
+        userId,
+        market.collateralToken,
+        market.chainId,
+      )
+    )?.balance;
+  }
+
+  getTradeModeCoefficient(mode: PredictionMarketTradeModesEnum) {
+    return mode === PredictionMarketTradeModesEnum.SELL ? -1 : 1;
   }
 
   async getAllOutcomesPrices(marketId: number, amount: number = 1) {
@@ -1392,7 +1576,7 @@ export class PredictionMarketService {
   ) {
     const market =
       typeof marketIdentifier === 'number'
-        ? await this.getMarket(marketIdentifier, 'outcomeTokens', 'ammFactory')
+        ? await this.getMarket(marketIdentifier, 'outcomeTokens')
         : marketIdentifier;
     if (!market.isOpen) {
       return market.outcomeTokens?.find(
@@ -1409,11 +1593,7 @@ export class PredictionMarketService {
   }
 
   async getAllOutcomesMarginalPrices(marketId: number) {
-    const market = await this.getMarket(
-      marketId,
-      'ammFactory',
-      'outcomeTokens',
-    );
+    const market = await this.getMarket(marketId, 'outcomeTokens');
     const prices = await Promise.all(
       market.outcomeTokens.map((token) =>
         this.predictionMarketContractsService.getOutcomeTokenMarginalPrices(
@@ -1424,7 +1604,7 @@ export class PredictionMarketService {
     );
     return market.outcomeTokens.map((token, i) => ({
       id: token.id,
-      outcome: token.predictionOutcome.title,
+      outcome: token.title,
       index: token.tokenIndex,
       price: prices[i],
       token,
@@ -1432,7 +1612,7 @@ export class PredictionMarketService {
   }
 
   async getSingleOutcomeMarginalPrice(marketId: number, outcomeIndex: number) {
-    const market = await this.getMarket(marketId, 'ammFactory');
+    const market = await this.getMarket(marketId);
     if (outcomeIndex >= market.numberOfOutcomes)
       throw new BadRequestException('This market does not have such outcome!');
     return this.predictionMarketContractsService.getOutcomeTokenMarginalPrices(
@@ -1450,12 +1630,58 @@ export class PredictionMarketService {
           : {}),
       },
       ...(relations?.length ? { relations } : {}),
+      ...(relations.includes('outcomeTokens')
+        ? {
+            order: {
+              outcomeTokens: {
+                tokenIndex: 'ASC',
+              },
+            },
+          }
+        : {}),
     });
+  }
+
+  async informUsersAboutSoonClosingMarkets(hoursRemaining: number) {
+    const millisecondsRemaining = hoursRemaining * 3600000;
+    const edgeDateStartMS = Date.now() + millisecondsRemaining;
+    const marketsSoonClosing = await this.predictionMarketRepository.find({
+      where: {
+        closedAt: IsNull(),
+        shouldResolveAt: Between(
+          new Date(edgeDateStartMS),
+          new Date(
+            edgeDateStartMS +
+              Math.min(
+                PredictionMarketService.marketsCheckoutIntervalInMinutes *
+                  60000,
+                millisecondsRemaining,
+              ), // This is for preventing markets processor to rapidly sending 'Market soon closes' notification in every interval in remaining hour(s);
+          ),
+        ),
+      },
+      relations: ['outcomeTokens'],
+    });
+
+    return Promise.all(
+      marketsSoonClosing.map((market) =>
+        this.webPushNotificationService.pushCheckoutPredictionMarketToSubscribers(
+          market,
+          { predictionMarketClosingSoon: true },
+          `⚠️ Market Will Close In Nearly ${hoursRemaining} Hour${
+            hoursRemaining > 1 ? 's' : ''
+          }`,
+        ),
+      ),
+    );
   }
 
   async closeMarket(market: PredictionMarket) {
     await this.predictionMarketContractsService.closeMarket(market);
     market.closedAt = new Date();
+    try {
+      await this.cacheService.del(`AMM.${market.id}`);
+    } catch {}
     return this.predictionMarketRepository.save(market);
   }
 
@@ -1481,12 +1707,14 @@ export class PredictionMarketService {
       case OracleTypesEnum.CENTRALIZED:
         if (market.oracle.account?.userId != null) {
           try {
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const oracleUser = await this.userService.findOne(
               market.oracle.account.userId,
               true,
             );
-            // Send a notification or sth
+            this.webPushNotificationService.pushPredictionMarketResolveTime(
+              oracleUser,
+              market,
+            );
           } catch (ex) {
             this.loggerService.error(
               `Failed notifying centralized Oracle \`${market.oracle.name}\` to start resolving market#${market.id}.`,
@@ -1502,8 +1730,29 @@ export class PredictionMarketService {
     }
   }
 
+  async changeMarketLiquidity(
+    user: User,
+    marketId: number,
+    changeAmount: number,
+  ) {
+    const market = await this.getMarket(marketId);
+    if (user.id !== market.creatorId) {
+      throw new ForbiddenException(
+        'Not allowed! Only creator can change liquidity!',
+      );
+    }
+    if (market.closedAt) {
+      throw new BadRequestException('Market is closed!');
+    }
+
+    return this.predictionMarketContractsService.changeMarketLiquidity(
+      market,
+      changeAmount,
+    );
+  }
+
   async forceCloseMarket(performer: User, marketId: number) {
-    const market = await this.getMarket(marketId, 'ammFactory');
+    const market = await this.getMarket(marketId);
     if (market.closedAt)
       throw new BadRequestException('This market is already closed!');
     if (market.creatorId !== performer.id)
@@ -1529,26 +1778,31 @@ export class PredictionMarketService {
       throw new MethodNotAllowedException(
         'This action is only allowed on markets with centralized oracles.',
       );
-
-    try {
-      if (
-        market.oracle.account.userId !== user.id ||
-        market.oracle.account.address !==
-          (
-            await this.blockchainWalletService.getWallet(user.id, {
-              throwIfNotFound: true,
-            })
-          )?.address
-      )
-        throw new ForbiddenException();
-    } catch (ex) {
-      // since blockchainWalletService may throw NotFound exception, this way the error message will still be related to the request.
-      throw new ForbiddenException(
-        "You're not allowed to do this since you're not this market's oracle.",
-      );
+    if (!force) {
+      try {
+        if (
+          market.oracle.account.userId !== user.id ||
+          market.oracle.account.address !==
+            (
+              await this.blockchainWalletService.getWallet(user.id, {
+                throwIfNotFound: true,
+              })
+            )?.address
+        )
+          throw new ForbiddenException();
+      } catch (ex) {
+        // since blockchainWalletService may throw NotFound exception, this way the error message will still be related to the request.
+        throw new ForbiddenException(
+          "You're not allowed to do this since you're not this market's oracle.",
+        );
+      }
     }
-
     if (market.isOpen) {
+      if (market.creatorId !== user.id) {
+        throw new ForbiddenException(
+          'Only market creator can force close the market!',
+        );
+      }
       if (!force) {
         throw new BadRequestException(
           'Market is not closed yet! This action is only available after market closes.',
@@ -1596,24 +1850,27 @@ export class PredictionMarketService {
       },
     );
     const participations: PredictionMarketParticipation[] = [];
-    // Note: outcomeTokens field must be ordered by tokenIndex
+
+    const [actualCost, actualMarketFee] = (
+      await Promise.all([
+        this.blockchainHelperService.toEthers(cost, market.collateralToken),
+        this.blockchainHelperService.toEthers(
+          marketFee,
+          market.collateralToken,
+        ),
+      ])
+    ).map((bigNumber) => bigNumber.toNumber());
+
     for (let i = 0; i < tokenAmounts.length; i++) {
       if (!tokenAmounts[i]) {
         continue;
       }
-      const [actualAmount, actualCost, actualMarketFee] = (
-        await Promise.all([
-          this.blockchainHelperService.toEthers(
-            tokenAmounts[i],
-            market.collateralToken,
-          ),
-          this.blockchainHelperService.toEthers(cost, market.collateralToken),
-          this.blockchainHelperService.toEthers(
-            marketFee,
-            market.collateralToken,
-          ),
-        ])
-      ).map((bigNumber) => bigNumber.toNumber());
+      const actualAmount = (
+        await this.blockchainHelperService.toEthers(
+          tokenAmounts[i],
+          market.collateralToken,
+        )
+      ).toNumber();
       market.outcomeTokens[i].amountInvested += actualAmount;
 
       participations.push(
@@ -1628,9 +1885,11 @@ export class PredictionMarketService {
               ? PredictionMarketParticipationModesEnum.BUY
               : PredictionMarketParticipationModesEnum.SELL,
           marketFee: actualMarketFee,
-          outcomeId: market.outcomeTokens[i].id,
+          outcome: market.outcomeTokens[i],
         }),
-      );
+      ); // NOTICE: Although this code processes multiple token purchase too; But we only allow single outcome purchases at once; Which is ok for now.
+      // But in case multiple-outcome purchase [at once] is allowed, Then the payment value must be divided;
+      // otherwise the payment sum in PMParticipation table will be invalid; It has an important challenge though: since the outcome price is changed.
     }
 
     await Promise.all([
@@ -1638,18 +1897,146 @@ export class PredictionMarketService {
       this.predictionMarketRepository.save(market),
       this.predictionMarketParticipationRepository.save(participations),
     ]);
+    this.cacheOngoingMarketPrices(market);
+    return participations;
   }
 
-  async getMarketParticipationStatistics(marketId: number) {
-    const market = await this.getMarket(marketId, 'outcomeTokens');
-    const totalInvestment = market.totalInvestment;
-    return market.outcomeTokens.map((token) => ({
-      id: token.id,
-      outcome: token.predictionOutcome.title,
-      index: token.tokenIndex,
-      participationPossibility: (100 * token.amountInvested) / totalInvestment,
-      token,
+  async cacheOngoingMarketPrices(market: PredictionMarket) {
+    const priceData =
+      await this.predictionMarketContractsService.getMarketAllOutcomePrices(
+        market,
+      );
+    let sumOfPrices = 0;
+    for (const outcomePriceInfo of priceData) {
+      sumOfPrices += outcomePriceInfo.price;
+    }
+    await this.cacheService.set(
+      `AMM.${market.id}`,
+      {
+        each: priceData.map((data) => ({
+          id: data.id,
+          index: data.index,
+          price: data.price,
+        })),
+        sum: sumOfPrices,
+      } as AmmMarketPriceCacheType,
+      21400000,
+    );
+  }
+
+  async getMarketOutcomeState(
+    market: PredictionMarket | PredictionMarketEntityWithParticipantsCount,
+    {
+      unwrapTokenField = true,
+      appendParticipantsData = false,
+    }: { unwrapTokenField?: boolean; appendParticipantsData?: boolean } = {},
+  ): Promise<
+    (
+      | OutcomeTokenParticipationInfo
+      | OutcomeStatistics
+      | OutcomeStatisticsWithParticipants
+    )[]
+  > {
+    const cache = (await this.cacheService.get(
+      `AMM.${market.id}`,
+    )) as AmmMarketPriceCacheType;
+
+    const priceData = cache?.each?.length
+      ? cache.each.map((data) => ({
+          ...data,
+          outcome: market.outcomeTokens[data.index].predictionOutcome.title,
+          token: market.outcomeTokens[data.index],
+        }))
+      : await this.predictionMarketContractsService.getMarketAllOutcomePrices(
+          market,
+        );
+    let sumOfPrices = cache?.sum ?? 0;
+    if (!sumOfPrices) {
+      for (const outcomePriceInfo of priceData) {
+        sumOfPrices += outcomePriceInfo.price;
+      }
+    }
+    const extra = appendParticipantsData
+      ? await Promise.all(
+          priceData.map(async (outcome) => ({
+            participants: await this.getNumberOfParticipants(
+              outcome.id,
+              'outcome',
+            ),
+          })),
+        )
+      : [];
+    if (!unwrapTokenField) {
+      return priceData.map((outcome, idx) => ({
+        ...outcome,
+        participationPossibility: (outcome.price / sumOfPrices) * 100.0,
+        ...(extra[idx] || {}),
+      }));
+    }
+    return priceData.map(({ token, ...outcome }, idx) => ({
+      ...outcome,
+      participationPossibility: (outcome.price / sumOfPrices) * 100.0,
+      investment: token.amountInvested,
+      collectionId: token.collectionId,
+      ...(market.isResolved ? { truenessRatio: token.truenessRatio } : {}),
+      icon: token.predictionOutcome.icon,
+      ...(extra[idx] || {}),
     }));
+  }
+
+  async getMarketOutcomesPossibility(
+    marketId: number,
+    basis: OutcomePossibilityBasisEnum,
+  ) {
+    let market: PredictionMarket;
+    switch (basis) {
+      case OutcomePossibilityBasisEnum.INVESTMENT:
+        market = await this.getMarket(marketId, 'outcomeTokens');
+        const totalInvestment = market.totalInvestment;
+        return market.outcomeTokens.map((token) => ({
+          id: token.id,
+          outcome: token.title,
+          index: token.tokenIndex,
+          participationPossibility:
+            (100 * token.amountInvested) / totalInvestment,
+          token,
+        }));
+      case OutcomePossibilityBasisEnum.PRICE:
+        market = await this.getMarket(marketId, 'outcomeTokens');
+        return this.getMarketOutcomeState(market, { unwrapTokenField: false }); // Default possibility is based on outcome price.
+      case OutcomePossibilityBasisEnum.LIQUIDITY:
+        const liquidities = await this.getMarketLiquidity(marketId);
+        let sum = new BigNumber(0);
+        for (const outcome of liquidities) {
+          sum = sum.plus(outcome.balance);
+        }
+        return liquidities.map((outcome) => ({
+          ...outcome,
+          participationPossibility:
+            100 * (1 - outcome.balance.div(sum).toNumber()),
+        }));
+      case OutcomePossibilityBasisEnum.COLLATERAL:
+        market = await this.getMarket(marketId, 'outcomeTokens');
+        let collateralPool: number = 0;
+        const perOutcomeCollateral = await Promise.all(
+          market.outcomeTokens.map(async (outcome) => {
+            const collateralPutOnOutcome =
+              await this.getMarketTotalCollateralPool(market.id, {
+                outcomeId: outcome.id,
+              });
+            collateralPool += collateralPutOnOutcome;
+            return collateralPutOnOutcome;
+          }),
+        );
+        return market.outcomeTokens.map((token, idx) => ({
+          id: token.id,
+          outcome: token.title,
+          index: token.tokenIndex,
+          token,
+          participationPossibility:
+            (100 * perOutcomeCollateral[idx]) / collateralPool,
+        }));
+    }
   }
 
   async setMarketResolutionData(
@@ -1657,7 +2044,7 @@ export class PredictionMarketService {
   ) {
     const market = await this.findByQuestionId(resolutionData.questionId, {
       conditionId: resolutionData.conditionId,
-      relations: ['outcomeTokens'],
+      relations: ['outcomeTokens', 'ammFactory'],
       order: {
         outcomeTokens: { tokenIndex: 'ASC' },
       },
@@ -1690,11 +2077,118 @@ export class PredictionMarketService {
         market: {
           id: market.id,
           question: market.question,
-          outcomes: market.statistics,
+          outcomes: market.outcomeTokens,
           resolutionData,
         },
       },
     });
+
+    try {
+      if (!(await this.predictionMarketContractsService.withdrawFees(market))) {
+        if (+market.fee > 0) {
+          this.loggerService.debug(
+            `Market#${market.id} successfully closed and resolved, but there were no fees to collect.`,
+            {
+              data: {
+                market: {
+                  id: market.id,
+                  question: market.question,
+                },
+              },
+            },
+          );
+        }
+      }
+    } catch (ex) {
+      this.loggerService.error(
+        `Fee collection after market resolution failed!`,
+        ex,
+        {
+          data: {
+            market: {
+              id: market.id,
+              question: market.question,
+            },
+          },
+        },
+      );
+    }
+    this.notifyUsersInterestedInMarketResolution(market, resolutionData).catch(
+      // start sending notifications in background
+      (ex) =>
+        this.loggerService.error(
+          `General error happened when trying to globally inform interested users (participants/winners) about market#${market.id} resolution result.`,
+          ex as Error,
+          {
+            data: {
+              marketId: market.id,
+              resolutionData,
+            },
+          },
+        ),
+    );
+  }
+
+  async notifyUsersInterestedInMarketResolution(
+    market: PredictionMarket,
+    resolutionData: PredictionMarketResolutionDataType,
+  ) {
+    const winnerOutcomes = market.outcomeTokens.filter(
+      (outcome) => outcome.truenessRatio,
+    );
+
+    let truenessRatioSum = 0;
+    const [participants, ...winners] = await Promise.all([
+      this.findParticipants(market.id, 'market'),
+      ...winnerOutcomes.map((tk) => {
+        truenessRatioSum += tk.truenessRatio;
+        return this.findParticipants(tk.id, 'outcome');
+      }),
+    ]);
+
+    this.webPushNotificationService
+      .pushPredictionMarketIsResolvedToParticipants(market, participants)
+      .catch((ex) =>
+        this.loggerService.error(
+          `Panic at web push notification for market resolution [to participants]`,
+          ex as Error,
+          {
+            data: {
+              marketId: market.id,
+              resolutionData,
+              participants: participants?.length,
+            },
+          },
+        ),
+      );
+
+    for (let i = 0; i < winnerOutcomes.length; i++) {
+      Promise.all(
+        winners[i]
+          .filter(
+            (user) =>
+              user?.notificationSettings?.webPushSubscription &&
+              user.notificationSettings.wonPredictionMarketBet,
+          )
+          .map(async (user) => {
+            const balance = await this.getConditionalTokenBalance(
+              user,
+              market.id,
+              winnerOutcomes[i].tokenIndex,
+            );
+            return this.webPushNotificationService.pushUserHasWonABet(
+              market,
+              user,
+              winnerOutcomes[i],
+              balance
+                .multipliedBy(winnerOutcomes[i].truenessRatio)
+                .div(truenessRatioSum)
+                .toNumber(),
+              true,
+            );
+          }),
+      );
+    }
   }
 
   async redeemUserRewards(user: User, marketId: number) {
@@ -1713,6 +2207,39 @@ export class PredictionMarketService {
         market,
       );
     return result;
+  }
+
+  async collectMarketFees(user: User, marketId: number) {
+    const market = await this.getMarket(marketId, 'ammFactory');
+    if (user.id !== market.creatorId) {
+      throw new ForbiddenException('Access denied!');
+    }
+    try {
+      const tx =
+        await this.predictionMarketContractsService.withdrawFees(market);
+      return {
+        result: tx ? 'OK' : 'Nothing to collect!',
+        feePercent: (market.fee ?? 0) * 100.0,
+        tx,
+      };
+    } catch (ex) {
+      this.loggerService.error(
+        `User#${user.id} [${user.username}] requested collecting fee from Market#${market.id} but operation failed:`,
+        ex,
+        {
+          data: {
+            market: {
+              id: market.id,
+              question: market.question,
+            },
+          },
+        },
+      );
+      throw new MethodNotAllowedException(
+        'Can not collect market fees because: ' +
+          truncateString((ex as Error).message),
+      );
+    }
   }
 
   async findUserTrades(
@@ -2011,28 +2538,7 @@ export class PredictionMarketService {
     const numberOfResolvedMarkets =
       +marketStats.markets - +marketStats.active_markets;
 
-    const [activePlayers, markets] = await Promise.all([
-      this.userService.getUsersCount(),
-      this.findMarkets(
-        {
-          sort: PredictionMarketSortOptionsDto.OUTCOMES_INDEX,
-          descending: false,
-        },
-        'ammFactory',
-        'outcomeTokens',
-      ),
-    ]);
-
-    const totalOraclePool = (
-      await Promise.all(
-        markets.map((market) =>
-          this.getMarketEquivalentCollateralBalance(market),
-        ),
-      )
-    ).reduce((total: number, pool: number) => {
-      total += pool;
-      return total;
-    });
+    const activePlayers = await this.userService.getUsersCount();
 
     const totalPurchases = +participations.total_purchase_amount,
       totalSells = +participations.total_sell_amount,
@@ -2041,6 +2547,7 @@ export class PredictionMarketService {
       collateralPaymentsIn24h = +participations.total_purchase_amount_in_24h,
       collateralPayoutsIn24h = +participations.total_sell_amount_in_24h;
 
+    // FIXME: totalCollateralPayouts is the sum of incomes gained from selling tokens; There must be a field that counts redeem amounts too.
     return {
       // Outcome Tokens:
       numberOfPurchases: +participations.purchases,
@@ -2056,7 +2563,7 @@ export class PredictionMarketService {
       collateralPaymentsIn24h,
       collateralPayoutsIn24h,
       marketVolumeIn24h: collateralPaymentsIn24h + collateralPayoutsIn24h,
-      totalOraclePool,
+      totalOraclePool: totalCollateralPayments - totalCollateralPayouts,
       totalPayouts: 0, // TODO: Must update after implementation of withdraw section.
       numberOfActivePlayers: activePlayers,
       numberOfOutcomesTraded: +participations.outcomes_traded,
@@ -2197,7 +2704,7 @@ export class PredictionMarketService {
       ),
     ]);
 
-    const newRedeemHistory = this.redeemHistoryRepository.create({
+    let newRedeemHistory = this.redeemHistoryRepository.create({
       redeemerId: redeemerWallet?.userId != null ? redeemerWallet.userId : null, // RedeemHistory needs to collect all redeems, event by those not a user here;
       // Since it affects the total amount redeemed from a market
       market,
@@ -2213,7 +2720,7 @@ export class PredictionMarketService {
       ).toNumber(),
     });
 
-    await Promise.all([
+    [newRedeemHistory] = await Promise.all([
       newRedeemHistory.payout > 0
         ? this.redeemHistoryRepository.save(newRedeemHistory)
         : null,
@@ -2224,14 +2731,105 @@ export class PredictionMarketService {
           )
         : null,
     ]);
+    return newRedeemHistory;
   }
 
-  getMarketTotalOraclePool(marketId: number, tokenId: number = null) {
+  async userCanClaimFromMarket(userId: number, market: PredictionMarket) {
+    return (
+      (
+        await Promise.all(
+          market.outcomeTokens
+            .filter((outcome) => outcome.truenessRatio)
+            .map(
+              async (outcome) =>
+                await this.predictionMarketContractsService.getUserConditionalTokenBalance(
+                  userId,
+                  market,
+                  outcome.tokenIndex,
+                ),
+            ),
+        )
+      ).findIndex((balance) => balance.gt(0)) !== -1
+    );
+  }
+
+  async setMarketViewResultStatusAsSeen(userId: number, marketId: number) {
+    const market = await this.getMarket(marketId, 'outcomeTokens');
+    if (!market.isResolved) {
+      throw new ConflictException('Only resolved markets results can be seen!');
+    }
+
+    if (
+      !(await this.predictionMarketParticipationRepository.findOneBy({
+        userId,
+        marketId,
+      }))
+    ) {
+      throw new BadRequestException(
+        "You've made no participation in this market so far!",
+      );
+    }
+
+    if (await this.userCanClaimFromMarket(userId, market)) {
+      throw new ConflictException(
+        'You seem to have something to claim in this market!',
+      );
+    }
+
+    await this.predictionMarketParticipationRepository.update(
+      { marketId: market.id, userId },
+      { isMonetized: true },
+    );
+  }
+
+  getMarketCumulativeCollateralPool(
+    marketId: number,
+    {
+      tokenId = null,
+      outcomeId = null,
+    }: { tokenId?: number; outcomeId?: number } = {},
+  ): Promise<number> {
+    // Sum only incoming collaterals in market
     return this.predictionMarketParticipationRepository.sum('paymentAmount', {
       marketId,
       ...(tokenId != null ? { paymentTokenId: tokenId } : {}),
+      ...(outcomeId != null ? { outcomeId } : {}),
       mode: PredictionMarketParticipationModesEnum.BUY.toString(),
     });
+  }
+
+  async getMarketTotalCollateralPool(
+    marketId: number,
+    {
+      tokenId = null,
+      outcomeId = null,
+    }: { tokenId?: number; outcomeId?: number } = {},
+  ): Promise<number> {
+    return this.predictionMarketParticipationRepository
+      .createQueryBuilder('pmp')
+      .select(
+        `SUM(
+          CASE 
+            WHEN pmp.mode = :buyMode THEN pmp.payment_amount
+            WHEN pmp.mode = :sellMode THEN -pmp.payment_amount
+            ELSE 0
+          END
+        )`,
+        'totalOraclePool',
+      )
+      .where('pmp.marketId = :marketId', { marketId })
+      .andWhere(outcomeId !== null ? 'pmp.outcome_id = :outcomeId' : 'TRUE', {
+        outcomeId,
+      })
+      .andWhere(tokenId !== null ? 'pmp.payment_token_id = :tokenId' : 'TRUE', {
+        tokenId,
+      })
+      .setParameters({
+        buyMode: PredictionMarketParticipationModesEnum.BUY.toString(),
+        sellMode: PredictionMarketParticipationModesEnum.SELL.toString(),
+      })
+      .getRawOne()
+      .then((result) => result.totalOraclePool ?? 0); // Return 0 if null
   }
 
   getUserRedeemReceipt(
@@ -2315,10 +2913,9 @@ export class PredictionMarketService {
                 )
               : null,
             this.getNumberOfParticipants(participation.marketId, 'market'),
-            this.getMarketTotalOraclePool(
-              participation.marketId,
-              participation.market_collateral_token_id,
-            ),
+            this.getMarketTotalCollateralPool(participation.marketId, {
+              tokenId: participation.market_collateral_token_id,
+            }),
             redeemed
               ? this.getUserRedeemReceipt(
                   userId,
@@ -2371,12 +2968,11 @@ export class PredictionMarketService {
     );
   }
 
-  @Cron(CronExpression.EVERY_10_MINUTES)
+  @Cron(
+    `0 */${PredictionMarketService.marketsCheckoutIntervalInMinutes} * * * *`,
+  )
   async processPredictionMarkets() {
-    const shouldBeResolvedMarkets = await this.findOngoingMarkets(
-      true,
-      'ammFactory',
-    );
+    const shouldBeResolvedMarkets = await this.findOngoingMarkets(true);
 
     for (const market of shouldBeResolvedMarkets) {
       // Instead of Promise.all-ing, Decided to process each market one-by-one to prevent any blockchain-side problem; Since in my tests batching contract calls is not a such good idea.
@@ -2418,6 +3014,33 @@ export class PredictionMarketService {
           { data: marketAndOutcomes },
         );
       }
+    }
+
+    this.informUsersAboutSoonClosingMarkets(
+      PredictionMarketService.hoursRemainingToMarketClosureReminder,
+    ).catch((ex) =>
+      this.loggerService.error(
+        'Informing users about soon closing markets process failed running',
+        ex as Error,
+      ),
+    );
+  }
+
+  @Cron(CronExpression.EVERY_6_HOURS)
+  async periodicUpdateOngoingMarketPriceCaches() {
+    try {
+      const markets = await this.findOngoingMarkets(false, 'outcomeTokens');
+      for (const market of markets) {
+        this.cacheOngoingMarketPrices(market);
+      }
+      this.loggerService.debug(
+        'Periodic AMM price caching processor successfully started working...',
+      );
+    } catch (ex) {
+      this.loggerService.error(
+        `Periodic AMM price caching processor failed this time.`,
+        ex as Error,
+      );
     }
   }
 }

@@ -1,11 +1,11 @@
 import {
   Injectable,
-  LoggerService,
   NotImplementedException,
   OnModuleInit,
 } from '@nestjs/common';
 import { ethers } from 'ethers';
 import { Chain } from '../blockchain-core/entities/chain.entity';
+import { LoggerService } from '../logger/logger.service';
 import { tradeEventsData } from './abis/trade-events.abi';
 import { PredictionMarketService } from '../prediction-market/prediction-market.service';
 import { PredictionMarket } from '../prediction-market/entities/market.entity';
@@ -21,6 +21,8 @@ import { BlockchainHelperService } from '../blockchain-core/blockchain-helper.se
 import { WebSocket } from 'ws';
 import { payoutRedemptionEventData } from './abis/payout-redemption-event.abi';
 import { PayoutRedemptionEventDataType } from './types/payout-redemption-data.copy';
+import { BlockchainTransactionTypeEnum } from 'src/blockchain-core/enums/transaction-type.enum';
+import { toCapitalCase } from 'src/core/utils/strings';
 
 type NetworkDataType = {
   provider: ethers.JsonRpcProvider;
@@ -141,7 +143,7 @@ export class BlockchainIndexerService implements OnModuleInit {
   async setupWebSocketListener(network: NetworkDataType) {
     await Promise.all([
       this.releaseWebsocketProvider(network.chain.id),
-      await this.checkoutChainLogs(network.chain.id),
+      this.checkoutChainLogs(network.chain.id),
     ]); // Ensures all logs before this are processed [on server restart or websocket disconnection.],
     // and also all previous websocket connection and listeners are released, to prevent multiple listeners remain open
 
@@ -296,8 +298,8 @@ export class BlockchainIndexerService implements OnModuleInit {
         ex as Error,
         {
           data: {
-            fetchedLatestBlock: latestBlockNumber,
-            lastProcessedBlock: network.chain.blockProcessOffset,
+            fetchedLatestBlock: latestBlockNumber?.toString(),
+            lastProcessedBlock: network?.chain?.blockProcessOffset?.toString(),
             chainId,
             rpc: network.chain.rpcUrl,
           },
@@ -446,10 +448,35 @@ export class BlockchainIndexerService implements OnModuleInit {
         },
       });
 
-      await this.predictionMarketService.updateMarketParticipations(
-        market,
-        decodedLog,
-      );
+      const participationsInfo =
+        await this.predictionMarketService.updateMarketParticipations(
+          market,
+          decodedLog,
+        );
+      if (participationsInfo?.length) {
+        await this.blockchainHelperService.addNewTransactionLog(
+          participationsInfo[0].userId,
+          participationsInfo[0].paymentToken ??
+            participationsInfo[0].paymentTokenId,
+          participationsInfo[0].transactionType,
+          log,
+          {
+            actualAmount: participationsInfo[0].paymentAmount,
+            remarks: {
+              exchangeInfo: participationsInfo.map((pi) => ({
+                participationId: pi.id,
+                amount: pi.amount,
+                token: pi.outcome.title,
+                fee: pi.marketFee,
+              })),
+              marketId: market.id,
+              description: `${toCapitalCase(participationsInfo[0].mode)} '${
+                participationsInfo[0].outcome.title
+              }' outcome at '${market.question}'`,
+            },
+          },
+        );
+      }
     } catch (ex) {
       this.loggerService.error('Failed processing trade log', ex as Error, {
         data: {
@@ -509,9 +536,27 @@ export class BlockchainIndexerService implements OnModuleInit {
       decodedLog = conditionalTokenContract.interface.parseLog(log);
       switch (eventType) {
         case 'redeem':
-          await this.predictionMarketService.updateRedeemHistory(
-            this.extractPayoutRedemptionDataFromEventLog(decodedLog),
-            chainId,
+          const redeemData =
+            await this.predictionMarketService.updateRedeemHistory(
+              this.extractPayoutRedemptionDataFromEventLog(decodedLog),
+              chainId,
+            );
+
+          await this.blockchainHelperService.addNewTransactionLog(
+            redeemData.redeemerId,
+            redeemData.token ?? redeemData.tokenId,
+            BlockchainTransactionTypeEnum.REDEEM,
+            log,
+            {
+              actualAmount: redeemData.payout,
+              remarks: {
+                marketId: redeemData.marketId,
+                redeemHistoryId: redeemData.id,
+                description: `Redeem rewards from '${
+                  redeemData.market?.question || 'Market#' + redeemData.marketId
+                }'`,
+              },
+            },
           );
           break;
         case 'resolve':

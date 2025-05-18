@@ -9,6 +9,7 @@ import {
   PredictionMarketParticipationResultsEnum,
 } from '../enums/market-participation.enums';
 import { User } from '../../user/entities/user.entity';
+import { BlockchainTransactionTypeEnum } from '../../blockchain-core/enums/transaction-type.enum';
 
 @Entity('prediction_market_participation')
 export class PredictionMarketParticipation extends BaseEntity {
@@ -133,5 +134,15 @@ export class PredictionMarketParticipation extends BaseEntity {
 
     // TODO/ASK: What if 0 < trueness < 1
     return PredictionMarketParticipationResultsEnum.UNKNOWN;
+  }
+
+  get transactionType() {
+    switch (this.mode as PredictionMarketParticipationModesEnum) {
+      case PredictionMarketParticipationModesEnum.BUY:
+        return BlockchainTransactionTypeEnum.TRADE_BUY;
+      case PredictionMarketParticipationModesEnum.SELL:
+        return BlockchainTransactionTypeEnum.TRADE_SELL;
+    }
+    return BlockchainTransactionTypeEnum.OTHER;
   }
 }

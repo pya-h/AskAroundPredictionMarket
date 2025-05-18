@@ -24,7 +24,6 @@ export class CryptocurrencyToken extends ContractEntity {
   decimals?: number;
 
   @ApiProperty({
-    type: 'json',
     description:
       'Contract ABI; Required so server can interact with token in blockchain.',
     isArray: true,
@@ -34,5 +33,11 @@ export class CryptocurrencyToken extends ContractEntity {
 
   toString() {
     return this.symbol.toString();
+  }
+
+  get alias() {
+    return this.symbol === CryptoTokenEnum.WETH9.toString() // TODO: Modify this after deploying Oracle token.
+      ? 'Oracle'
+      : this.name;
   }
 }

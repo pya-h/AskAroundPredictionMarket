@@ -1,7 +1,11 @@
 import { ethers } from 'ethers';
 import { ConditionTokenContractData } from '../abis/ctf.abi';
 import { PredictionMarket } from '../../prediction-market/entities/market.entity';
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+} from '@nestjs/common';
 import { BlockchainHelperService } from '../../blockchain-core/blockchain-helper.service';
 import { EthereumAccount } from '../../blockchain-core/types/ethereum-account.class';
 import { MarketEconomicConstants } from '../../core/constants/constants';
@@ -29,6 +33,61 @@ export class LmsrMarketHelperService {
     );
   }
 
+  async calculateTradeFee(
+    market: PredictionMarket,
+    {
+      tradeCostWei = null,
+      amountInWei = null,
+      outcomeIndex = null,
+    }: {
+      tradeCostWei?: bigint | string;
+      outcomeIndex?: number;
+      amountInWei?: bigint | string;
+    } = {},
+  ): Promise<{ cost: bigint | string; fee: bigint | string }> {
+    if (tradeCostWei == null) {
+      if (amountInWei == null || outcomeIndex == null) {
+        throw new BadRequestException(
+          'Can not calculate trade fee due to insufficient information!',
+        );
+      }
+      tradeCostWei = await this.calculateOutcomeTokenPrice(
+        market,
+        outcomeIndex,
+        amountInWei,
+      );
+    }
+    return {
+      cost: tradeCostWei,
+      fee: await this.blockchainHelperService.call<bigint>(
+        this.blockchainHelperService.getAmmContractHandler(market),
+        { name: 'calcMarketFee', isView: true },
+        tradeCostWei,
+      ),
+    };
+  }
+
+  async calculateTradesAfterFeeCost(
+    market: PredictionMarket | ethers.Contract,
+    outcomeAmountsInWei: bigint[],
+  ) {
+    const marketMakerContract =
+      market instanceof ethers.Contract
+        ? market
+        : this.blockchainHelperService.getAmmContractHandler(market);
+    const cost = await this.blockchainHelperService.call<bigint>(
+        marketMakerContract,
+        { name: 'calcNetCost', isView: true },
+        outcomeAmountsInWei,
+      ),
+      fee = await this.blockchainHelperService.call<bigint>(
+        marketMakerContract,
+        { name: 'calcMarketFee', isView: true },
+        cost >= 0 ? cost : -cost,
+      );
+    return cost + fee;
+  }
+
   async calculatePriceOfBatchOutcomes(
     market: PredictionMarket,
     amountsRespectively: bigint[],
@@ -43,7 +102,7 @@ export class LmsrMarketHelperService {
   async buyOutcomeToken(
     buyer: EthereumAccount,
     market: PredictionMarket,
-    formattedAmount: bigint,
+    amountInWei: bigint,
     selectedOutcomeIndex: number,
     marketMakerContract: ethers.Contract,
     collateralTokenContract: ethers.Contract,
@@ -52,23 +111,20 @@ export class LmsrMarketHelperService {
     const outcomeTokenAmounts = Array.from(
       { length: market.numberOfOutcomes },
       (_: unknown, index: number) =>
-        index === selectedOutcomeIndex ? formattedAmount : 0n,
+        index === selectedOutcomeIndex ? amountInWei : 0n,
     );
 
-    const [cost, collateralBalance] = (
-      await Promise.all([
-        this.blockchainHelperService.call<bigint | number>(
-          marketMakerContract,
-          { name: 'calcNetCost', isView: true },
-          outcomeTokenAmounts,
-        ),
-        this.blockchainHelperService.call<bigint | number>(
-          collateralTokenContract,
-          { name: 'balanceOf', isView: true },
-          buyer.address,
-        ),
-      ])
-    ).map((x) => BigInt(x));
+    const [cost, collateralBalance] = await Promise.all([
+      this.calculateTradesAfterFeeCost(
+        marketMakerContract,
+        outcomeTokenAmounts,
+      ),
+      this.blockchainHelperService.call<bigint | number>(
+        collateralTokenContract,
+        { name: 'balanceOf', isView: true },
+        buyer.address,
+      ),
+    ]);
 
     const costForSure =
       cost +
@@ -105,7 +161,7 @@ export class LmsrMarketHelperService {
       market.address,
       costForSure.toString(),
     );
-
+    // TODO: Maybe separately add cost and fee to response?
     return this.blockchainHelperService.call(
       marketMakerContract,
       { name: 'trade', runner: buyer },
@@ -158,9 +214,8 @@ export class LmsrMarketHelperService {
 
     const profit = -(
       manualCollateralLimit ||
-      (await this.blockchainHelperService.call<bigint>(
+      (await this.calculateTradesAfterFeeCost(
         marketMakerContract,
-        { name: 'calcNetCost', isView: true, runner: seller },
         outcomeTokenAmounts,
       ))
     );
@@ -177,14 +232,8 @@ export class LmsrMarketHelperService {
     market: PredictionMarket,
     outcomeIndex: number,
   ) {
-    const marketMakerContract = new ethers.Contract(
-      market.address,
-      market.ammFactory.marketMakerABI,
-      this.blockchainHelperService.rpcProvider,
-    );
-
     return this.blockchainHelperService.call<bigint | number>(
-      marketMakerContract,
+      this.blockchainHelperService.getAmmContractHandler(market),
       { name: 'calcMarginalPrice', isView: true },
       outcomeIndex,
       { from: market.address },

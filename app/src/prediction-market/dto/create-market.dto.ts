@@ -9,13 +9,15 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  Max,
   MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
-import { CryptoTokenEnum } from 'src/blockchain-core/enums/crypto-token.enum';
-import { IsEnumDetailed } from 'src/core/decorators/is-enum-detailed.decorator';
-import { ContainsUniqueItems } from 'src/core/validators/contains-unique-items.validator';
+import { CryptoTokenEnum } from '../../blockchain-core/enums/crypto-token.enum';
+import { IsEnumDetailed } from '../../core/decorators/is-enum-detailed.decorator';
+import { ContainsUniqueItems } from '../../core/validators/contains-unique-items.validator';
 
 export class NewPredictionMarketOutcomeInfoDto {
   @ApiProperty({
@@ -107,6 +109,15 @@ export class CreatePredictionMarketDto {
   @IsNumber()
   @IsPositive()
   initialLiquidity: number;
+
+  @ApiPropertyOptional({ description: 'Market trade fee in percent (%)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0, { message: 'fee must be a non-negative percentage!' })
+  @Max(99.999999, {
+    message: `fee must be smaller than 100.`,
+  })
+  fee?: number;
 
   @Type(() => Date)
   @IsDate()

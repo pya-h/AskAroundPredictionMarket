@@ -9,7 +9,9 @@ export function IsEnumDetailed(enumModel: object, title: string = '') {
     IsEnum(enumModel, {
       message:
         `${title} Supported options are: ` +
-        Object.values(enumModel).join(', '),
+        Object.values(enumModel)
+          .map((x) => `'${x}'`)
+          .join(', '),
     }),
   );
 }

@@ -1,13 +1,22 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { User } from './entities/user.entity';
+import { UserNotificationSettings } from './entities/user-notification-settings.entity';
+import { UpdateFcmTokenDto } from './dtos/update-fcm-token.dto';
+import { UpdateNotificationSettingsDto } from './dtos/update-notification-settings.dto';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    @InjectRepository(UserNotificationSettings)
+    private readonly userNotificationSettingsRepository: Repository<UserNotificationSettings>,
   ) {}
 
   // Notice: Password must be hashed. This is just temp.
@@ -19,6 +28,16 @@ export class UserService {
         email,
       }),
     );
+
+    const userNotificationSettings =
+      this.userNotificationSettingsRepository.create({
+        userId: user.id,
+      });
+    user.notificationSettings = userNotificationSettings;
+    await this.userNotificationSettingsRepository.save(
+      userNotificationSettings,
+    );
+
     return user;
   }
 
@@ -69,5 +88,51 @@ export class UserService {
   }
   getUsersCount() {
     return this.userRepository.count();
+  }
+
+  async updateFcmToken(user: User, updateFcmTokenDto: UpdateFcmTokenDto) {
+    await this.userRepository.update(
+      { id: user.id },
+      { fcmToken: updateFcmTokenDto.fcmToken },
+    );
+  }
+
+  async getUserNotificationSetting(user: User) {
+    const notificationSettings =
+      await this.userNotificationSettingsRepository.findOneBy({
+        userId: user.id,
+      });
+    return (
+      notificationSettings ??
+      (await this.userNotificationSettingsRepository.save(
+        this.userNotificationSettingsRepository.create({ userId: user.id }),
+      ))
+    );
+  }
+
+  findBatch(
+    propertyList: (number | string)[],
+    field: 'id' | 'email' | 'username' = 'id',
+  ) {
+    return this.userRepository.find({ where: { [field]: In(propertyList) } });
+  }
+
+  async updateUserNotificationSettings(
+    user: User,
+    updateNotificationSettingsDto: UpdateNotificationSettingsDto,
+  ) {
+    if (!user.notificationSettings) {
+      user.notificationSettings = await this.getUserNotificationSetting(user);
+    }
+
+    if (!Object.values(updateNotificationSettingsDto)?.length) {
+      throw new BadRequestException('Nothing changed!');
+    }
+
+    Object.assign(user.notificationSettings, updateNotificationSettingsDto);
+
+    return this.userNotificationSettingsRepository.save(
+      user.notificationSettings,
+    );
   }
 }

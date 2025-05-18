@@ -8,7 +8,9 @@ import { Chain } from './entities/chain.entity';
 import { CryptocurrencyToken } from './entities/cryptocurrency-token.entity';
 import { BlockchainHelperService } from './blockchain-helper.service';
 import { ContractEntity } from './entities/contract.entity';
-import { ConfigModule } from '../config/config.module';
+import { BlockchainTransactionLog } from './entities/transaction-log.entity';
+import { PredictionMarketParticipation } from '../prediction-market/entities/participation.entity';
+import { ConfigModule } from 'src/config/config.module';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { ConfigModule } from '../config/config.module';
       Chain,
       CryptocurrencyToken,
       ContractEntity,
+      BlockchainTransactionLog,
+      PredictionMarketParticipation,
     ]),
     ConfigModule,
   ],

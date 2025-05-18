@@ -8,6 +8,8 @@ import {
   IsPositive,
   Min,
 } from 'class-validator';
+import { PredictionMarketTradeModesEnum } from '../enums/market-participation.enums';
+import { IsEnumDetailed } from 'src/core/decorators/is-enum-detailed.decorator';
 
 export class GetConditionalTokenBalanceQuery {
   @IsNumberString()
@@ -46,7 +48,18 @@ export class WhatYouGetQuery {
     return value;
   })
   @IsNumber()
-  @IsInt()
   @IsPositive()
   payment: number;
+
+  @ApiPropertyOptional({
+    enum: PredictionMarketTradeModesEnum,
+    enumName: 'PredictionMarketTradeModesEnum',
+    description:
+      'Specify wether you want the purchasing price or selling price.',
+    default: PredictionMarketTradeModesEnum.BUY,
+    required: false,
+  })
+  @IsOptional()
+  @IsEnumDetailed(PredictionMarketTradeModesEnum, 'mode')
+  mode?: PredictionMarketTradeModesEnum;
 }

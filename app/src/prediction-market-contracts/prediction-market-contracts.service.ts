@@ -2,7 +2,6 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  LoggerService,
   NotFoundException,
   NotImplementedException,
 } from '@nestjs/common';
@@ -23,10 +22,17 @@ import { PredictionMarketTypesEnum } from './enums/market-types.enum';
 import { LmsrMarketHelperService } from './helpers/lmsr-market-helper.service';
 import { BlockchainWalletService } from '../blockchain-core/blockchain-wallet.service';
 import { BlockchainHelperService } from '../blockchain-core/blockchain-helper.service';
+import { LoggerService } from '../logger/logger.service';
 import { BaseConditionalToken } from '../prediction-market/entities/bases/base-conditional-token.entity';
+import { BlockchainTransactionTypeEnum } from '../blockchain-core/enums/transaction-type.enum';
+import { BlockchainTransactionStatusEnum } from '../blockchain-core/enums/transaction-status.enum';
+import { BlockchainTransactionLog } from '../blockchain-core/entities/transaction-log.entity';
+import { PredictionMarketStatusEnum } from '../prediction-market/enums/market-status.enum';
 
 @Injectable()
 export class PredictionMarketContractsService {
+  private readonly MARKET_MAKER_FEE_RANGE = 10 ** 18; // Based on gnosis MarketMaker contract
+
   toKeccakHash(data: string) {
     return ethers.keccak256(ethers.toUtf8Bytes(data));
   }
@@ -109,6 +115,7 @@ export class PredictionMarketContractsService {
     outcomes: BaseConditionalToken[],
     initialLiquidityInEth: number,
     oracle: Oracle,
+    fee: number = 0.0,
   ) {
     const currentChainId =
       await this.blockchainHelperService.getCurrentChainId();
@@ -151,9 +158,6 @@ export class PredictionMarketContractsService {
     );
 
     const questionId = this.toKeccakHash(question);
-    this.loggerService.debug(
-      `#DeployMarket: ${question} - questionId = ${questionId} - START`,
-    );
 
     const prepareConditionTx =
       await this.blockchainHelperService.call<ethers.TransactionReceipt>(
@@ -171,21 +175,12 @@ export class PredictionMarketContractsService {
       questionId,
       outcomes.length,
     );
-
-    this.loggerService.debug(
-      `#DeployMarket: Preparing Condition - SUCCESS => conditionId: ${conditionId}`,
-    );
-
     const operatorCollateralBalance =
       await this.blockchainHelperService.call<bigint>(
         collateralTokenContract,
         { name: 'balanceOf', isView: true },
-        this.blockchainHelperService.operatorAccount.address,
+        this.blockchainHelperService.operatorEthersWallet.address,
       );
-
-    this.loggerService.debug(
-      `#DeployMarket: Get Operator Collateral Balance - SUCCESS => ${operatorCollateralBalance}`,
-    );
 
     if (operatorCollateralBalance < initialLiquidity) {
       await this.blockchainHelperService.call(
@@ -194,10 +189,6 @@ export class PredictionMarketContractsService {
         {
           value: initialLiquidity - operatorCollateralBalance,
         },
-      );
-
-      this.loggerService.debug(
-        `#DeployMarket: Deposit ${initialLiquidityInEth} Collateral for Liquidity - SUCCESS`,
       );
     }
 
@@ -208,10 +199,6 @@ export class PredictionMarketContractsService {
       initialLiquidity,
     );
 
-    this.loggerService.debug(
-      '#DeployMarket: Collateral Use Approval for AMM Factory - SUCCESS',
-    );
-
     const lmsrFactoryTx =
       await this.blockchainHelperService.call<ethers.ContractTransactionReceipt>(
         marketMakerFactoryContract,
@@ -219,17 +206,12 @@ export class PredictionMarketContractsService {
         ConditionTokenContractData.address, // pmSystem
         collateralToken.address,
         [conditionId],
-        0, // market fee
+        ((fee ?? 0) * this.MARKET_MAKER_FEE_RANGE).toFixed(0),
         '0x0000000000000000000000000000000000000000', // whitelist
         initialLiquidity,
       );
 
-    this.loggerService.debug(
-      `#DeployMarket: LMSR MARKET CREATION - SUCCESS => txHash: ${lmsrFactoryTx.hash}`,
-    );
-
     const startedAt = new Date();
-
     const creationLog =
       await this.blockchainHelperService.getEventLogFromReceipt(
         lmsrFactoryTx,
@@ -247,12 +229,6 @@ export class PredictionMarketContractsService {
         'Although the market creation seems ok, but server fails to find its contract!',
       );
     }
-
-    this.loggerService.debug(
-      `#DeployMarket: Find Market Address from Market Creation Log - SUCCESS => MarketAddress: ${
-        creationLog[0].args[factory.marketMakerAddressField]
-      }\n#DeployMarket: Market Successfully Deployed To Blockchain.`,
-    );
 
     return {
       conditionId: conditionId,
@@ -440,19 +416,21 @@ export class PredictionMarketContractsService {
   ) {
     switch (market.type) {
       case PredictionMarketTypesEnum.LMSR.toString():
-        const unitInWei = await this.blockchainHelperService.toWei(
+        const amountInWei = await this.blockchainHelperService.toWei(
           amount,
           market.collateralToken,
         );
 
-        return this.blockchainHelperService.toEthers(
-          await this.lmsrMarketHelperService.calculateOutcomeTokenPrice(
-            market,
-            index,
-            BigInt(unitInWei.toFixed()),
-          ),
-          market.collateralToken,
-        );
+        return (
+          await this.blockchainHelperService.toEthers(
+            await this.lmsrMarketHelperService.calculateOutcomeTokenPrice(
+              market,
+              index,
+              BigInt(amountInWei.toFixed()),
+            ),
+            market.collateralToken,
+          )
+        ).abs();
       case PredictionMarketTypesEnum.FPMM.toString():
         throw new NotImplementedException('Not fully implemented yet.');
       case PredictionMarketTypesEnum.ORDER_BOOK.toString():
@@ -472,7 +450,7 @@ export class PredictionMarketContractsService {
         return this.blockchainHelperService.toEthers(
           await this.lmsrMarketHelperService.calculatePriceOfBatchOutcomes(
             market,
-            amountsInWei.map((x) => BigInt(x.toFixed())),
+            amountsInWei.map((x) => BigInt(x.abs().toFixed())),
           ),
           market.collateralToken,
         );
@@ -487,6 +465,20 @@ export class PredictionMarketContractsService {
     market: PredictionMarket,
     amount: number = 1,
   ) {
+    if (!market.isOpen) {
+      if (amount < 0) {
+        amount *= -1; // Buy and sell price in resolved market are the same.
+      }
+      return market.outcomeTokens?.map((outcome) => ({
+        id: outcome.id,
+        outcome: outcome.title,
+        index: outcome.tokenIndex,
+        price:
+          outcome.truenessRatio != null ? outcome.truenessRatio * amount : null,
+        token: outcome,
+      }));
+    }
+
     const amountInWei = BigInt(
       (
         await this.blockchainHelperService.toWei(
@@ -495,17 +487,6 @@ export class PredictionMarketContractsService {
         )
       ).toFixed(),
     );
-
-    if (!market.isOpen) {
-      return market.outcomeTokens?.map((outcome) => ({
-        id: outcome.id,
-        outcome: outcome.predictionOutcome.title,
-        index: outcome.tokenIndex,
-        price: outcome.truenessRatio,
-        token: outcome,
-      }));
-    }
-
     switch (market.type) {
       case PredictionMarketTypesEnum.LMSR.toString():
         const prices = await Promise.all(
@@ -529,9 +510,9 @@ export class PredictionMarketContractsService {
 
         return prices.map((price, i) => ({
           id: market.outcomeTokens[i].id,
-          outcome: market.outcomeTokens[i].predictionOutcome.title,
+          outcome: market.outcomeTokens[i].title,
           index: market.outcomeTokens[i].tokenIndex,
-          price: price.toNumber(),
+          price: price.abs().toNumber(),
           token: market.outcomeTokens[i],
         }));
       case PredictionMarketTypesEnum.FPMM.toString():
@@ -632,13 +613,132 @@ export class PredictionMarketContractsService {
     };
   }
 
-  getMarketTradeFee(market: PredictionMarket) {
+  async pauseMarket(market: PredictionMarket): Promise<void>;
+  async pauseMarket(contract: ethers.Contract): Promise<void>;
+  async pauseMarket(
+    marketOrContract: PredictionMarket | ethers.Contract,
+  ): Promise<void> {
+    const contract =
+      marketOrContract instanceof ethers.Contract
+        ? marketOrContract
+        : this.blockchainHelperService.getAmmContractHandler(marketOrContract);
+    await this.blockchainHelperService.call(contract, {
+      name: 'pause',
+    });
+  }
+
+  async resumeMarket(market: PredictionMarket): Promise<void>;
+  async resumeMarket(contract: ethers.Contract): Promise<void>;
+  async resumeMarket(
+    marketOrContract: PredictionMarket | ethers.Contract,
+  ): Promise<void> {
+    const contract =
+      marketOrContract instanceof ethers.Contract
+        ? marketOrContract
+        : this.blockchainHelperService.getAmmContractHandler(marketOrContract);
+    await this.blockchainHelperService.call(contract, {
+      name: 'resume',
+    });
+  }
+
+  async getMarketFeeRatio(market: PredictionMarket) {
     const marketMakerContract =
       this.blockchainHelperService.getAmmContractHandler(market);
-    return this.blockchainHelperService.call(marketMakerContract, {
-      name: 'fee',
-      isView: true,
-    });
+    return (
+      (await this.blockchainHelperService.call<number>(marketMakerContract, {
+        name: 'fee',
+        isView: true,
+      })) / this.MARKET_MAKER_FEE_RANGE
+    );
+  }
+
+  async changeMarketFeeRatio(market: PredictionMarket, newFee: number) {
+    const marketMakerContract =
+      this.blockchainHelperService.getAmmContractHandler(market);
+    if (market.status !== PredictionMarketStatusEnum.PAUSED.toString()) {
+      try {
+        await this.pauseMarket(marketMakerContract); // changeFee can only be called on a paused market.
+      } catch (ex) {
+        this.loggerService.debug(
+          `Failed pausing market#${market.id} before changing fee; maybe market is already paused?`,
+          { data: { ex, marketId: market.id, question: market.question } },
+        );
+      }
+    }
+    try {
+      const result = await this.blockchainHelperService.call(
+        marketMakerContract,
+        {
+          name: 'changeFee',
+        },
+        (newFee * this.MARKET_MAKER_FEE_RANGE).toString(), // warning: not stringifying the fee will cause in blockchain overflow error!
+      );
+      return result;
+    } catch (ex) {
+      this.loggerService.error(
+        `Operator tried to change market#${market.id}'s fee but failed.`,
+        ex as Error,
+        {
+          data: { marketId: market.id, question: market.question, newFee },
+        },
+      );
+      throw ex;
+    } finally {
+      await this.resumeMarket(marketMakerContract);
+    }
+  }
+
+  async withdrawFees(
+    market: PredictionMarket,
+  ): Promise<BlockchainTransactionLog | null> {
+    const marketMakerContract =
+      this.blockchainHelperService.getAmmContractHandler(market);
+    const withdrawTx =
+      await this.blockchainHelperService.call<ethers.ContractTransactionReceipt>(
+        marketMakerContract,
+        {
+          name: 'withdrawFees',
+        },
+      );
+    switch (market.type as PredictionMarketTypesEnum) {
+      case PredictionMarketTypesEnum.LMSR:
+        const logs = await this.blockchainHelperService.getEventLogFromReceipt(
+          withdrawTx,
+          marketMakerContract,
+          'AMMFeeWithdrawal',
+        );
+        if (!logs?.[0].args?.fees) {
+          return null;
+        }
+        return this.blockchainHelperService.addNewTransactionLog(
+          this.blockchainHelperService.operatorId,
+          market.collateralToken,
+          BlockchainTransactionTypeEnum.COLLECT_FEE,
+          withdrawTx,
+          {
+            actualAmount: (
+              await this.blockchainHelperService.toEthers(
+                logs[0].args.fees,
+                market.collateralToken,
+              )
+            ).toNumber(),
+            status: BlockchainTransactionStatusEnum.SUCCESSFUL,
+            remarks: {
+              description: `Collecting fees from market#${market.id} by operator.`,
+              marketId: market.id,
+              question: market.question,
+              feeRatio: market.fee,
+            },
+            reverseParties: true, // since the returned tx is actually withdraw request, it's from the operator to the market.
+          },
+        );
+      default:
+        // TODO: remember that FPMM contract does not emit event after fee withdraw; You should call 'collectedFees' function before withdrawing. (simple and efficient)
+        // Or call feeWithdrawnBy func and subtract that value from sum of previous operator withdraws.
+        throw new NotImplementedException(
+          `${market.type.toUpperCase()} Markets are not implemented yet.`,
+        );
+    }
   }
 
   async getMarketFunding(market: PredictionMarket) {
@@ -657,5 +757,67 @@ export class PredictionMarketContractsService {
         market.collateralToken,
       )
     ).toNumber();
+  }
+
+  async changeMarketLiquidity(market: PredictionMarket, changeAmount: number) {
+    const marketMakerContract =
+      this.blockchainHelperService.getAmmContractHandler(market);
+
+    if (market.status !== PredictionMarketStatusEnum.PAUSED.toString()) {
+      try {
+        await this.pauseMarket(marketMakerContract); // changeFunding can only be called on a paused market.
+      } catch (ex) {
+        this.loggerService.debug(
+          `Failed pausing market#${market.id} before changing fee; maybe market is already paused?`,
+          { data: { ex, marketId: market.id, question: market.question } },
+        );
+      }
+    }
+    try {
+      const weiAmount = (
+          await this.blockchainHelperService.toWei(
+            changeAmount,
+            market.collateralToken,
+          )
+        ).toFixed(),
+        collateralTokenContract =
+          this.blockchainHelperService.getContractHandler(
+            market.collateralToken,
+          );
+      await this.blockchainHelperService.call(
+        collateralTokenContract,
+        { name: 'approve' },
+        market.address,
+        weiAmount,
+      );
+      const result = await this.blockchainHelperService.call(
+        marketMakerContract,
+        {
+          name: 'changeFunding',
+        },
+        (
+          await this.blockchainHelperService.toWei(
+            changeAmount,
+            market.collateralToken,
+          )
+        ).toFixed(),
+      );
+      return result;
+    } catch (ex) {
+      this.loggerService.error(
+        `Operator tried to change market#${market.id}'s liquidity but failed.`,
+        ex as Error,
+        {
+          data: {
+            marketId: market.id,
+            question: market.question,
+            changeAmount,
+          },
+        },
+      );
+      throw ex;
+    } finally {
+      await this.resumeMarket(marketMakerContract);
+    }
   }
 }

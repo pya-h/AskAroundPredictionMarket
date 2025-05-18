@@ -37,7 +37,7 @@ export class TransactionReceiptDto {
   @ApiProperty({ type: 'number' })
   index: 0;
 
-  @ApiProperty({ type: 'object', isArray: true })
+  @ApiProperty({ isArray: true })
   logs: object[];
 
   @ApiProperty({

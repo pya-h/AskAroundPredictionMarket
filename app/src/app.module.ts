@@ -12,6 +12,10 @@ import { BlockchainCoreModule } from './blockchain-core/blockchain-core.module';
 import { BlockchainIndexerModule } from './blockchain-indexer/blockchain-indexer.module';
 import { FileUploadModule } from './file-upload/file-upload.module';
 import { MinioModule } from './minio/minio.module';
+import { CacheModule } from '@nestjs/cache-manager';
+import { DiagnosticsModule } from './diagnostics/diagnostics.module';
+import { NotificationModule } from './notification/notification.module';
+import { EmailModule } from './email/email.module';
 
 @Module({
   imports: [
@@ -28,6 +32,12 @@ import { MinioModule } from './minio/minio.module';
     }),
     ConfigModule,
     UserModule,
+    NotificationModule,
+    EmailModule,
+    CacheModule,
+    ...(process.env.ENABLE_DIAGNOSTICS?.toLowerCase() === 'true'
+      ? [DiagnosticsModule]
+      : []),
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -54,4 +54,8 @@ export class Chain extends BaseEntity {
   get webSocketRpcUrl() {
     return this.wsRpcUrl || this.rpcUrl.replace('http', 'ws');
   }
+
+  override toString() {
+    return this.name ?? this.id.toString();
+  }
 }

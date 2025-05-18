@@ -1,7 +1,7 @@
-import { ConfigService } from '@nestjs/config';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsInt, IsOptional, IsPositive } from 'class-validator';
 import { config } from 'dotenv';
+import { ConfigService } from 'src/config/config.service';
 
 config();
 

@@ -1,5 +1,5 @@
 import { Expose, Type } from 'class-transformer';
-import { PublicUserData } from 'src/user/dto/public-user-data.dto';
+import { User } from 'src/user/entities/user.entity';
 
 export class BlockchainWalletPublicDataDto {
   @Expose() id: number;
@@ -7,9 +7,9 @@ export class BlockchainWalletPublicDataDto {
 
   @Expose() userId: number;
 
-  @Type(() => PublicUserData)
+  @Type(() => User)
   @Expose()
-  user: PublicUserData;
+  user: User;
 
   @Expose() createdAt: Date;
   @Expose() updatedAt: Date;

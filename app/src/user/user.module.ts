@@ -6,9 +6,10 @@ import { User } from './entities/user.entity';
 import { AuthService } from './auth.service';
 import { CurrentUserInterceptor } from './interceptors/current-user.interceptor';
 import { APP_INTERCEPTOR } from '@nestjs/core';
+import { UserNotificationSettings } from './entities/user-notification-settings.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User])],
+  imports: [TypeOrmModule.forFeature([User, UserNotificationSettings])],
   providers: [
     UserService,
     AuthService,

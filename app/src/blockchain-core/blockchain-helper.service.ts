@@ -5,6 +5,7 @@ import {
   Injectable,
   InternalServerErrorException,
   LoggerService,
+  NotImplementedException,
   OnModuleInit,
 } from '@nestjs/common';
 import { ethers } from 'ethers';
@@ -20,7 +21,13 @@ import { ContractIdentifiersType } from './types/contract-identifier.type';
 import { PredictionMarket } from '../prediction-market/entities/market.entity';
 import { ContractRunnerType } from './types/common.types';
 import { EthereumAccount } from './types/ethereum-account.class';
-import { ConfigService } from '../config/config.service';
+import { BlockchainTransactionLog } from './entities/transaction-log.entity';
+import { BlockchainTransactionStatusEnum } from './enums/transaction-status.enum';
+import { BlockchainTransactionTypeEnum } from './enums/transaction-type.enum';
+import { PredictionMarketTypesEnum } from '../prediction-market-contracts/enums/market-types.enum';
+import { LmsrMarketMakerContractData } from '../prediction-market-contracts/abis/lmsr-market.abi';
+import { FixedProductMarketMakerContractData } from '../prediction-market-contracts/abis/fp-market.abi';
+import { ConfigService } from 'src/config/config.service';
 
 @Injectable()
 export class BlockchainHelperService implements OnModuleInit {
@@ -39,6 +46,8 @@ export class BlockchainHelperService implements OnModuleInit {
     private readonly chainRepository: Repository<Chain>,
     @InjectRepository(BlockchainWallet)
     private readonly blockchainWalletRepository: Repository<BlockchainWallet>,
+    @InjectRepository(BlockchainTransactionLog)
+    private readonly bTxLogRepository: Repository<BlockchainTransactionLog>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly configService: ConfigService,
@@ -46,8 +55,9 @@ export class BlockchainHelperService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    const defaultChainID =
-      +this.configService.getOrThrow<number>('NET_CHAIN_ID');
+    const defaultChainID = +this.configService.getOrThrow<number>(
+      'blockchain.defaultChainID',
+    );
     const net = await this.getChain(defaultChainID);
     this.provider = new ethers.JsonRpcProvider(net.rpcUrl);
     const wallet = await this.getOperatorWallet();
@@ -59,6 +69,10 @@ export class BlockchainHelperService implements OnModuleInit {
   }
 
   get operatorAccount() {
+    return this.operator;
+  }
+
+  get operatorEthersWallet() {
     return this.operator.ethers;
   }
 
@@ -85,6 +99,12 @@ export class BlockchainHelperService implements OnModuleInit {
     });
   }
 
+  getCryptocurrencyTokenById(id: number) {
+    return this.cryptocurrencyTokenRepository.findOneBy({
+      id,
+    });
+  }
+
   findCryptocurrencyTokenByAddress(address: string, chainId: number) {
     return this.cryptocurrencyTokenRepository.findOneBy({
       chainId,
@@ -104,10 +124,13 @@ export class BlockchainHelperService implements OnModuleInit {
 
   async toEthers(
     amount: bigint | number | BigNumber,
-    token: CryptocurrencyToken,
+    token?: CryptocurrencyToken,
   ) {
+    if (!token) {
+      return new BigNumber(ethers.formatEther(amount.toString()));
+    }
     return (
-      amount instanceof BigNumber ? amount : new BigNumber(amount.toString())
+      amount instanceof BigNumber ? amount : new BigNumber(amount?.toString())
     ).div(10 ** (await this.getCryptoTokenDecimals(token)));
   }
 
@@ -128,8 +151,14 @@ export class BlockchainHelperService implements OnModuleInit {
     return this.cryptocurrencyTokenRepository.save(token);
   }
 
-  getChain(chainId: number) {
-    return this.chainRepository.findOneBy({ id: chainId });
+  async getChain(chainId: number, throwIfNotFound: boolean = false) {
+    const chain = await this.chainRepository.findOneBy({ id: chainId });
+    if (throwIfNotFound && !chain) {
+      throw new NotImplementedException(
+        "Currently we don't support this chain!",
+      );
+    }
+    return chain;
   }
 
   findChains() {
@@ -152,7 +181,7 @@ export class BlockchainHelperService implements OnModuleInit {
     return new ethers.Contract(
       address,
       abi,
-      specificRunner || this.operatorAccount,
+      specificRunner || this.operatorEthersWallet,
     );
   }
 
@@ -160,11 +189,24 @@ export class BlockchainHelperService implements OnModuleInit {
     market: PredictionMarket,
     specificRunner?: ContractRunnerType,
   ) {
-    return new ethers.Contract(
-      market.address,
-      market.ammFactory.marketMakerABI,
-      specificRunner || this.operatorAccount,
-    );
+    switch (market.type as PredictionMarketTypesEnum) {
+      case PredictionMarketTypesEnum.LMSR:
+        return new ethers.Contract(
+          market.address,
+          LmsrMarketMakerContractData.abi,
+          specificRunner || this.operatorEthersWallet,
+        );
+      case PredictionMarketTypesEnum.FPMM:
+        return new ethers.Contract(
+          market.address,
+          FixedProductMarketMakerContractData.abi,
+          specificRunner || this.operatorEthersWallet,
+        );
+      default:
+        throw new NotImplementedException(
+          `${market.type} markets are not supported right now!`,
+        );
+    }
   }
 
   getWalletHandler(
@@ -193,7 +235,12 @@ export class BlockchainHelperService implements OnModuleInit {
     amount: number | bigint,
     chain: Chain,
     tokenSymbol?: CryptoTokenEnum,
-  ): Promise<{ receipt: ethers.TransactionReceipt; amountInWei: bigint }>;
+  ): Promise<{
+    receipt: ethers.TransactionReceipt;
+    amountInWei: bigint;
+    token?: CryptocurrencyToken;
+    chain: Chain;
+  }>;
 
   async transfer(
     from: EthereumAccount,
@@ -201,32 +248,79 @@ export class BlockchainHelperService implements OnModuleInit {
     amount: number | bigint,
     chain: Chain,
     tokenSymbol?: CryptoTokenEnum,
-  ): Promise<{ receipt: ethers.TransactionReceipt; amountInWei: bigint }>;
+  ): Promise<{
+    receipt: ethers.TransactionReceipt;
+    amountInWei: bigint;
+    token?: CryptocurrencyToken;
+    chain: Chain;
+  }>;
+
+  async transfer(
+    from: BlockchainWallet,
+    to: BlockchainWallet,
+    amount: number | bigint,
+    chain: Chain,
+    token?: CryptocurrencyToken,
+  ): Promise<{
+    receipt: ethers.TransactionReceipt;
+    amountInWei: bigint;
+    token?: CryptocurrencyToken;
+    chain: Chain;
+  }>;
+
+  async transfer(
+    from: EthereumAccount,
+    to: BlockchainWallet,
+    amount: number | bigint,
+    chain: Chain,
+    token?: CryptocurrencyToken,
+  ): Promise<{
+    receipt: ethers.TransactionReceipt;
+    amountInWei: bigint;
+    token?: CryptocurrencyToken;
+    chain: Chain;
+  }>;
 
   async transfer(
     from: BlockchainWallet | EthereumAccount,
     to: BlockchainWallet,
     amount: number | bigint,
     chain: Chain,
-    tokenSymbol: CryptoTokenEnum = null,
-  ): Promise<{ receipt: ethers.TransactionReceipt; amountInWei: bigint }> {
+    tokenOrSymbol: CryptoTokenEnum | CryptocurrencyToken = null,
+  ): Promise<{
+    receipt: ethers.TransactionReceipt;
+    amountInWei: bigint;
+    token?: CryptocurrencyToken;
+    chain: Chain;
+  }> {
     const fromAccount =
       from instanceof BlockchainWallet
         ? this.getEthereumAccount(from, chain)
         : from;
-    if (!tokenSymbol || tokenSymbol.toString() === chain.nativeToken) {
+    if (
+      !tokenOrSymbol ||
+      (tokenOrSymbol instanceof CryptocurrencyToken
+        ? tokenOrSymbol.symbol
+        : tokenOrSymbol
+      ).toString() === chain.nativeToken
+    ) {
       const amountInWei = ethers.parseEther(amount.toString());
       const tx = await fromAccount.ethers.sendTransaction({
         to: to.address,
         value: amountInWei,
       });
-      return { receipt: await tx.wait(), amountInWei };
+      return { receipt: await tx.wait(), amountInWei, chain };
     }
 
-    const token = await this.getCryptocurrencyToken(tokenSymbol, chain.id);
+    const token =
+      tokenOrSymbol instanceof CryptocurrencyToken
+        ? tokenOrSymbol
+        : await this.getCryptocurrencyToken(tokenOrSymbol, chain.id);
     const amountInWei = BigInt((await this.toWei(amount, token)).toFixed());
     return {
+      token,
       amountInWei,
+      chain,
       receipt: await this.call<ethers.TransactionReceipt>(
         { address: token.address, abi: token.abi },
         { name: 'transfer', runner: fromAccount },
@@ -259,9 +353,8 @@ export class BlockchainHelperService implements OnModuleInit {
       destination,
       finalAmount,
       chain,
+      false,
     );
-
-    this.faucetOptions.requestTimes[destination.userId] = Date.now();
 
     return {
       amount: finalAmount,
@@ -271,10 +364,15 @@ export class BlockchainHelperService implements OnModuleInit {
     };
   }
 
+  updateUserFaucetRequestTime(userId: number) {
+    this.faucetOptions.requestTimes[userId] = Date.now();
+  }
+
   async transferNativeTokensTo(
     destination: BlockchainWallet,
     amount: number,
     chain: Chain,
+    createTransactionLog: boolean = true,
   ) {
     const { receipt, amountInWei } = await this.transfer(
       this.operator.wallet,
@@ -282,6 +380,25 @@ export class BlockchainHelperService implements OnModuleInit {
       amount,
       chain,
     );
+
+    if (createTransactionLog) {
+      await this.addNewTransactionLog(
+        destination.userId,
+        await this.getCryptocurrencyToken(
+          chain.nativeToken as CryptoTokenEnum,
+          chain.id,
+        ),
+        BlockchainTransactionTypeEnum.TRANSFER,
+        receipt,
+        {
+          actualAmount: amount,
+          status: BlockchainTransactionStatusEnum.SUCCESSFUL,
+          remarks: {
+            description: `Receiving ${chain.nativeToken} from OmenArena`,
+          },
+        },
+      );
+    }
     return {
       token: chain.nativeToken,
       receipt,
@@ -339,36 +456,51 @@ export class BlockchainHelperService implements OnModuleInit {
         : new ethers.Contract(
             contractData.address,
             contractData.abi,
-            func.runner?.ethers || this.operatorAccount,
+            func.runner?.ethers || this.operatorEthersWallet,
           );
-    try {
-      if (func.isView) {
+
+    if (func.isView) {
+      try {
         return (await contract[func.name](...args)) as T;
+      } catch (ex) {
+        this.loggerService.error(`Failed calling a view (${func.name}):`, ex);
+        return null;
       }
+    }
 
+    try {
       if (func.runner && func.runner.address !== this.operator.address) {
-        const estimatedGas = new BigNumber(
-          (await contract[func.name].estimateGas(...args)).toString(),
-        )
-          .multipliedBy(1.2)
-          .decimalPlaces(0, 1); // 120 % estimated value for assurance
+        const [gas, feeData, userExactNativeTokenBalance] = await Promise.all([
+          contract[func.name].estimateGas(...args),
+          this.provider.getFeeData(),
+          this.provider.getBalance(func.runner.address),
+        ]);
 
-        const userNativeTokenBalance = await this.provider.getBalance(
-          func.runner.address,
+        const estimatedGas = new BigNumber(
+          (gas * feeData.maxFeePerGas).toString(),
         );
 
-        if (estimatedGas.gte(userNativeTokenBalance.toString())) {
+        const userAvailableNativeTokenBalance =
+          userExactNativeTokenBalance -
+          BigInt((func?.name === 'deposit' && args[0]?.['value']) || 0);
+
+        const walletGasRefillMultiplier = +(
+          this.configService.get<number>(
+            'blockchain.walletGasRefillMultiplier',
+          ) ?? 20
+        );
+        if (
+          estimatedGas.gte(userAvailableNativeTokenBalance.toString()) &&
+          walletGasRefillMultiplier // set walletGasRefillMultiplier to zero, to disable gas provision process
+        ) {
           const gasChargeAmount = estimatedGas.multipliedBy(
-            this.configService.get<number>(
-              'NET_WALLET_GAS_REFILL_MULTIPLIER',
-            ) || 20,
+            walletGasRefillMultiplier,
           );
 
           try {
             const gasProvideTx = await this.operator.ethers.sendTransaction({
               to: func.runner.address,
-              value: BigInt(estimatedGas.toFixed()),
-              nonce: await func.runner.ethers.getNonce(),
+              value: BigInt(gasChargeAmount.toFixed()),
             });
             if (!func.dontWait) {
               const log = await gasProvideTx.wait();
@@ -492,6 +624,7 @@ export class BlockchainHelperService implements OnModuleInit {
     );
     return {
       token: targetToken,
+      amount,
       receipt: await this.call<ethers.TransactionReceipt>(
         targetTokenContract,
         { name: 'deposit', runner: ownerEthAccount },
@@ -500,5 +633,51 @@ export class BlockchainHelperService implements OnModuleInit {
         },
       ),
     };
+  }
+
+  async addNewTransactionLog(
+    userId: number,
+    token: number | CryptocurrencyToken | null,
+    txType: BlockchainTransactionTypeEnum,
+    data: ethers.TransactionReceipt | ethers.Log,
+    {
+      actualAmount = null,
+      status = BlockchainTransactionStatusEnum.SUCCESSFUL,
+      remarks = null,
+      reverseParties = false,
+    }: {
+      actualAmount?: number;
+      status?: BlockchainTransactionStatusEnum;
+      remarks?: Record<string, unknown>;
+      reverseParties?: boolean; // useful in some cases, which the obtained transaction is related to operation request, not the transfer tx itself.
+    } = {},
+  ) {
+    const { from, to, hash, blockHash, blockNumber, value } =
+      await data.getTransaction();
+
+    return this.bTxLogRepository.save(
+      this.bTxLogRepository.create({
+        userId,
+        ...(!reverseParties ? { from, to } : { from: to, to: from }),
+        hash,
+        blockHash,
+        blockNumber: BigInt(blockNumber),
+        tokenId: token instanceof CryptocurrencyToken ? token.id : token,
+        amount:
+          actualAmount ??
+          (
+            await this.toEthers(
+              value,
+              typeof token === 'number'
+                ? await this.getCryptocurrencyTokenById(token)
+                : token,
+            )
+          ).toNumber(),
+        status:
+          status?.toString() ?? BlockchainTransactionStatusEnum.SUCCESSFUL,
+        type: txType.toString(),
+        remarks,
+      }),
+    );
   }
 }

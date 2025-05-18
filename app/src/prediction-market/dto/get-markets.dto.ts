@@ -45,8 +45,8 @@ export class GetMarketsQuery extends PaginationOptionsDto {
   @ApiPropertyOptional({
     enum: PredictionMarketSortOptionsDto,
     enumName: 'PredictionMarketSortOptionsDto',
-    description:
-      'Sort markets by specific date, number of outcomes, question or number of participants',
+    description: `Sort markets by specific date, number of outcomes, question or number of participants;
+      Notice: selecting 'outcomesIndex' will only sort outcomeTokens list within each market, it does not affect markets order.`,
     default: PredictionMarketSortOptionsDto.CREATION_DATE,
   })
   @IsOptional()
@@ -59,4 +59,12 @@ export class GetMarketsQuery extends PaginationOptionsDto {
   @IsOptional()
   @IsBooleanValue()
   descending?: boolean;
+
+  @ApiPropertyOptional({
+    description: `Sort markets by their priority value;
+      Setting this true will precede the sort option, meaning markets will be sorted first by priority and then by sort option (if set).`,
+  })
+  @IsOptional({})
+  @IsBooleanValue()
+  prioritized?: boolean;
 }

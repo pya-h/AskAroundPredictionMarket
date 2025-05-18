@@ -1,9 +1,9 @@
 import { Column, Entity, OneToMany } from 'typeorm';
 import { ConditionalToken } from './conditional-token.entity';
 import { ApiProperty } from '@nestjs/swagger';
-import { OutcomeStatistics } from '../dto/responses/prediction-market-extra.dto';
 import { PredictionMarketStatusEnum } from '../enums/market-status.enum';
 import { BasePredictionMarket } from './bases/base-market.entity';
+import { approximate } from '../../core/utils/calculus';
 
 @Entity('prediction_market')
 export class PredictionMarket extends BasePredictionMarket {
@@ -98,6 +98,24 @@ export class PredictionMarket extends BasePredictionMarket {
   @OneToMany(() => ConditionalToken, (outcomeToken) => outcomeToken.market)
   outcomeTokens: ConditionalToken[];
 
+  get truenessRatioSum() {
+    let sumOfRatios = 0;
+    for (const outcome of this.outcomeTokens) {
+      sumOfRatios += outcome.truenessRatio;
+    }
+    return sumOfRatios;
+  }
+
+  get truenessRatioPercentages() {
+    if (!this.outcomeTokens?.length || !this.isResolved) {
+      return [];
+    }
+    const { truenessRatioSum } = this;
+    return this.outcomeTokens.map((outcome) =>
+      approximate((100 * outcome.truenessRatio) / truenessRatioSum, 'round'),
+    );
+  }
+
   get isOpen() {
     return !this.closedAt;
   }
@@ -131,18 +149,39 @@ export class PredictionMarket extends BasePredictionMarket {
     return totalInvestment;
   }
 
-  get statistics(): OutcomeStatistics[] {
-    const { totalInvestment } = this;
-    return this.outcomeTokens?.map((token) => ({
-      id: token.id,
-      outcome: token.predictionOutcome.title,
-      index: token.tokenIndex,
-      participationPossibility:
-        (100.0 * token.amountInvested) / totalInvestment,
-      investment: token.amountInvested,
-      collectionId: token.collectionId,
-      ...(this.isResolved ? { truenessRatio: token.truenessRatio } : {}),
-      icon: token.predictionOutcome.icon,
-    }));
+  toString({
+    includeDescription = false,
+    asHtml = false,
+    useIcons = false,
+  }: {
+    includeDescription?: boolean;
+    asHtml?: boolean;
+    useIcons?: boolean;
+  } = {}): string {
+    const nextLine = !asHtml ? '\n' : '<br>',
+      indentation = !asHtml ? '    ' : '&nbsp;&nbsp;&nbsp;&nbsp;';
+
+    const getOutcomeIcon = (outcome: ConditionalToken) =>
+      ['❌', '✅'][outcome.truenessRatio] ?? '👁‍🗨';
+    const outcomes = this.outcomeTokens
+      ?.map(
+        (outcome, index) =>
+          `${indentation}${useIcons ? getOutcomeIcon(outcome) : ''} ${
+            outcome.title
+          }` +
+          (outcome.truenessRatio > 0 && outcome.truenessRatio < 1
+            ? `: ${this.truenessRatioPercentages[index] ?? '-'} %`
+            : ''),
+      )
+      .join(nextLine);
+
+    return (
+      `${this.question}${nextLine}${outcomes}` +
+      (includeDescription && this.description?.length
+        ? `${nextLine}${nextLine}${indentation}${useIcons ? '🔘' : ''} ${
+            this.description
+          }`
+        : '')
+    );
   }
 }

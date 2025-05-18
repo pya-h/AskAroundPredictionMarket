@@ -153,4 +153,29 @@ export class BasePredictionMarket extends BaseEntity {
   @ApiProperty({ type: 'string', nullable: true, default: null })
   @Column({ nullable: true })
   description: string;
+
+  @ApiProperty({
+    type: 'number',
+    description: `How important a market is: This field can be used for pinning important markets,`,
+    default: 1,
+  })
+  @Column({ type: 'smallint', default: 1, nullable: false })
+  priority: number;
+
+  @ApiProperty({
+    type: 'number',
+    description: `Market trade fee ratio (without percent); It's a value in [0, 1) with up to 8 digits precision.`,
+    default: 0.0,
+  })
+  @Column({
+    type: 'decimal',
+    default: 0.0,
+    nullable: false,
+    transformer: {
+      to: (value: unknown) => value,
+      from: (value: string | null): number =>
+        value != null ? parseFloat(value) : 0, // It seems that decimal is loading up as string!
+    },
+  })
+  fee: number;
 }

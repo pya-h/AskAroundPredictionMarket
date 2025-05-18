@@ -1,11 +1,23 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
+  LoggerService,
   NotFoundException,
   NotImplementedException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { BlockchainWallet } from './entities/blockchain-wallet.entity';
-import { ILike, Repository } from 'typeorm';
+import {
+  Between,
+  FindOptionsOrder,
+  ILike,
+  In,
+  JsonContains,
+  LessThan,
+  MoreThan,
+  Repository,
+} from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CryptoTokenEnum } from './enums/crypto-token.enum';
 import { ethers } from 'ethers';
@@ -15,6 +27,13 @@ import { BlockchainHelperService } from './blockchain-helper.service';
 import { PredictionMarket } from '../prediction-market/entities/market.entity';
 import { Chain } from './entities/chain.entity';
 import { User } from '../user/entities/user.entity';
+import { WebPushNotificationService } from '../notification/web-push-notification.service';
+import { BlockchainTransactionLog } from './entities/transaction-log.entity';
+import { BlockchainTransactionSortOptionsEnum } from './enums/transaction-sort-options.enum';
+import { GetBlockchainTransactionHistoryOptionsDto } from './dtos/get-transaction-history-options.dto';
+import { BlockchainTransactionTypeEnum } from './enums/transaction-type.enum';
+import { BlockchainTransactionStatusEnum } from './enums/transaction-status.enum';
+import { PredictionMarketParticipation } from '../prediction-market/entities/participation.entity';
 
 @Injectable()
 export class BlockchainWalletService {
@@ -22,10 +41,20 @@ export class BlockchainWalletService {
     @InjectRepository(BlockchainWallet)
     private readonly blockchainWalletRepository: Repository<BlockchainWallet>,
     private readonly blockchainHelperService: BlockchainHelperService,
+    private readonly webPushNotificationService: WebPushNotificationService,
+    private readonly loggerService: LoggerService,
+    @InjectRepository(BlockchainTransactionLog)
+    private readonly bTxLogRepository: Repository<BlockchainTransactionLog>,
+    @InjectRepository(PredictionMarketParticipation)
+    private readonly predictionMarketParticipationRepository: Repository<PredictionMarketParticipation>,
   ) {}
 
   async alreadyOwnsWallet(userId: number) {
     return Boolean(await this.blockchainWalletRepository.findOneBy({ userId }));
+  }
+
+  async isChainSupported(id: number) {
+    return Boolean(await this.blockchainHelperService.getChain(id));
   }
 
   async manuallyConnectWallet(
@@ -125,23 +154,40 @@ export class BlockchainWalletService {
     tokenSymbol: CryptoTokenEnum,
     chainId: number,
     provider?: ethers.JsonRpcProvider,
-  ): Promise<BigNumber>;
+  ): Promise<{ balance: BigNumber; chain: Chain }>;
 
   async getBalance(
     userId: number,
     token: CryptocurrencyToken,
     chainId: number,
     provider?: ethers.JsonRpcProvider,
-  ): Promise<BigNumber>;
+  ): Promise<{ balance: BigNumber; chain: Chain }>;
+
+  async getBalance(
+    userId: number,
+    tokenSymbol: CryptoTokenEnum,
+    chain: Chain,
+    provider?: ethers.JsonRpcProvider,
+  ): Promise<{ balance: BigNumber; chain: Chain }>;
+
+  async getBalance(
+    userId: number,
+    token: CryptocurrencyToken,
+    chain: Chain,
+    provider?: ethers.JsonRpcProvider,
+  ): Promise<{ balance: BigNumber; chain: Chain }>;
 
   async getBalance(
     userId: number,
     tokenOrSymbol: CryptoTokenEnum | CryptocurrencyToken,
-    chainId: number,
+    chainOrId: number | Chain,
     provider?: ethers.JsonRpcProvider,
-  ): Promise<BigNumber> {
+  ): Promise<{ balance: BigNumber; chain: Chain }> {
     const wallet = await this.getWallet(userId);
-    const chain = await this.blockchainHelperService.getChain(chainId);
+    const chain =
+      typeof chainOrId === 'number'
+        ? await this.blockchainHelperService.getChain(chainOrId, true)
+        : chainOrId;
 
     if (!provider) {
       provider = new ethers.JsonRpcProvider(chain.rpcUrl);
@@ -149,7 +195,10 @@ export class BlockchainWalletService {
 
     if (tokenOrSymbol.toString() === chain.nativeToken) {
       const nativeTokenBalance = await provider.getBalance(wallet.address);
-      return new BigNumber(ethers.formatEther(nativeTokenBalance));
+      return {
+        chain,
+        balance: new BigNumber(ethers.formatEther(nativeTokenBalance)),
+      };
     }
 
     const token =
@@ -157,7 +206,7 @@ export class BlockchainWalletService {
         ? tokenOrSymbol
         : await this.blockchainHelperService.getCryptocurrencyToken(
             tokenOrSymbol,
-            chainId,
+            chain.id,
           );
     if (!token?.address || !token.abi)
       throw new NotImplementedException(
@@ -169,7 +218,10 @@ export class BlockchainWalletService {
       this.blockchainHelperService.getWalletHandler(wallet, provider),
     );
     const balanceInWei = await tokenContract.balanceOf(wallet.address);
-    return this.blockchainHelperService.toEthers(balanceInWei, token);
+    return {
+      chain,
+      balance: await this.blockchainHelperService.toEthers(balanceInWei, token),
+    };
   }
 
   async getMarketCollateralBalance(
@@ -208,49 +260,193 @@ export class BlockchainWalletService {
       await this.blockchainHelperService.faucetDonateNativeTokens(
         wallet,
         chain,
+        10,
       );
-    const { token } =
+    const { token, receipt, amount } =
       await this.blockchainHelperService.convertNativeTokenToOther(
         wallet,
         chain,
         this.defaultCryptoToken,
-        { amountInWei: nativeTransferResult.amountInWei },
+        {
+          amountInWei: nativeTransferResult.amountInWei,
+          amount: nativeTransferResult.amount,
+        },
       );
 
-    return {
-      ...nativeTransferResult,
-      amountInWei: nativeTransferResult.amountInWei.toString(),
+    await this.blockchainHelperService.addNewTransactionLog(
+      user.id,
+      token,
+      BlockchainTransactionTypeEnum.FAUCET,
+      receipt,
+      {
+        actualAmount: amount,
+        remarks: {
+          exchangeInfo: {
+            chainId,
+            amount: nativeTransferResult.amount,
+            token: nativeTransferResult.token,
+            txHash: nativeTransferResult.receipt.hash,
+          },
+          description: `Receive faucet ${token.alias}s from OmenArena`,
+        },
+      },
+    );
+
+    this.blockchainHelperService.addNewTransactionLog(
+      this.blockchainHelperService.operatorId,
+      token,
+      BlockchainTransactionTypeEnum.TRANSFER,
+      nativeTransferResult.receipt,
+      {
+        actualAmount: nativeTransferResult.amount,
+        remarks: {
+          note: `${chain.nativeToken} transferred, then converted to ${token.alias}.`,
+          description: `Transfer faucet ${token.alias}s to user#${user.id} [${user.username}]`,
+        },
+      },
+    );
+
+    this.webPushNotificationService.pushBlockchainWalletDepositSuccessful(
+      user,
+      nativeTransferResult.amount,
+      token,
       chain,
-      balance: await this.getBalance(user.id, token, chainId),
+    );
+    this.blockchainHelperService.updateUserFaucetRequestTime(user.id);
+
+    return {
+      amount,
+      receipt,
+      token: token.alias,
+      amountInWei: nativeTransferResult.amountInWei.toString(),
+      ...(await this.getBalance(user.id, token, chain)),
     };
   }
 
   async chargeUserWallet(userId: number, amount: number, chainId: number) {
-    const chain = await this.blockchainHelperService.getChain(chainId);
-    if (!chain)
-      throw new NotImplementedException(
-        "OmenArena doesn't support this chain yet.",
-      );
-    const wallet = await this.getWallet(userId);
-    const nativeTransferResult =
-      await this.blockchainHelperService.transferNativeTokensTo(
-        wallet,
-        amount,
-        chain,
-      );
-    const { token } =
-      await this.blockchainHelperService.convertNativeTokenToOther(
-        wallet,
-        chain,
+    const { token, receipt, amountInWei, chain } =
+      await this.transferFromOperator(
+        userId,
         this.defaultCryptoToken,
-        { amountInWei: nativeTransferResult.amountInWei },
+        amount,
+        chainId,
       );
-    return {
-      ...nativeTransferResult,
-      amountInWei: nativeTransferResult.amountInWei.toString(),
+
+    this.webPushNotificationService.pushBlockchainWalletDepositSuccessful(
+      userId,
+      amount,
+      token,
       chain,
-      balance: await this.getBalance(userId, token, chainId),
+    );
+    return {
+      token,
+      receipt,
+      amountInWei: amountInWei.toString(),
+      chain,
+      ...(await this.getBalance(userId, token, chain)),
     };
+  }
+
+  async transferFromOperator(
+    targetId: number,
+    tokenSymbol: CryptoTokenEnum,
+    amount: number,
+    chainId: number | null = null,
+    txMeta: {
+      type?: BlockchainTransactionTypeEnum;
+      description?: string;
+      extra?: Record<string, unknown>;
+      operatorTxDescription?: string;
+    } = {}, // default tx is deposit
+  ) {
+    if (targetId === this.blockchainHelperService.operatorId) {
+      throw new BadRequestException(
+        'Operator can not transfer token to itself!',
+      );
+    }
+    if (chainId == null) {
+      chainId = await this.blockchainHelperService.getCurrentChainId();
+    }
+
+    if (tokenSymbol === CryptoTokenEnum.ORACLE) {
+      tokenSymbol = CryptoTokenEnum.WETH9; // FIXME: OracleToken temp
+    }
+
+    const token = await this.blockchainHelperService.getCryptocurrencyToken(
+      tokenSymbol,
+      chainId,
+    );
+    const [{ balance, chain }, targetWallet] = await Promise.all([
+      this.getBalance(this.blockchainHelperService.operatorId, token, chainId),
+      this.getWallet(targetId, { throwIfNotFound: false }),
+    ]);
+    if (balance.lte(amount)) {
+      try {
+        if (tokenSymbol.toString() === chain.nativeToken) {
+          throw new Error(
+            `Chain#${chain.id}-${chain.name}'s Native token:${tokenSymbol} is running low on operator.`,
+          );
+        }
+
+        await this.convertNativeTokenToOther(
+          this.blockchainHelperService.operatorId,
+          chainId,
+          tokenSymbol,
+          balance.minus(amount).multipliedBy(-5).toNumber(),
+        );
+      } catch (ex) {
+        this.loggerService.error(
+          'It seems Operator is running low on some tokens; Do a refill...',
+          ex as Error,
+          { data: { tokens: [chain.nativeToken, token.symbol] } },
+        );
+        throw new ServiceUnavailableException(
+          "It seems that we're enable to complete this request right now; Maybe retry it sometime later?",
+        );
+      }
+    }
+
+    const result = await this.blockchainHelperService.transfer(
+      this.blockchainHelperService.operatorAccount,
+      targetWallet,
+      amount,
+      chain,
+      token,
+    );
+
+    await this.blockchainHelperService.addNewTransactionLog(
+      targetId,
+      token,
+      txMeta?.type ?? BlockchainTransactionTypeEnum.DEPOSIT,
+      result.receipt,
+      {
+        actualAmount: amount,
+        remarks: {
+          description:
+            txMeta?.description ||
+            `Charge user#${targetId}'s account with ${token.alias} by OmenArena`,
+          ...(txMeta?.extra ?? {}),
+        },
+      },
+    );
+
+    this.blockchainHelperService.addNewTransactionLog(
+      // Not awaiting is intentional, to prevent operation slowing down
+      this.blockchainHelperService.operatorId,
+      token,
+      BlockchainTransactionTypeEnum.TRANSFER,
+      result.receipt,
+      {
+        actualAmount: amount,
+        remarks: {
+          description:
+            txMeta?.operatorTxDescription ||
+            `Charge-Transfer ${token.alias}s to user#${targetId}`,
+        },
+      },
+    );
+
+    return result;
   }
 
   async getEthereumAccount(userId: number, chain?: Chain) {
@@ -271,11 +467,172 @@ export class BlockchainWalletService {
     if (!chain) {
       throw new NotImplementedException('This chain is not supported yet!');
     }
-    return this.blockchainHelperService.convertNativeTokenToOther(
+    const result = await this.blockchainHelperService.convertNativeTokenToOther(
       wallet,
       chain,
       tokenSymbol,
       { amount },
     );
+    this.webPushNotificationService.pushBlockchainWalletDepositSuccessful(
+      userId,
+      amount,
+      result.token,
+      chain,
+    );
+    return result;
+  }
+
+  async getUserTransactions(
+    userId: number,
+    {
+      relations = null,
+      take = null,
+      skip = null,
+      token = null,
+      chain = null,
+      minAmount = null,
+      maxAmount = null,
+      status = null,
+      type = null,
+      block = null,
+      marketId = null,
+      sort = null,
+      descending = false,
+    }: GetBlockchainTransactionHistoryOptionsDto & {
+      relations?: string[];
+    } = {},
+  ) {
+    const orderOptions: FindOptionsOrder<BlockchainTransactionLog> = {};
+    switch (sort) {
+      case BlockchainTransactionSortOptionsEnum.BLOCK:
+        orderOptions.blockNumber = descending ? 'DESC' : 'ASC';
+        break;
+      case BlockchainTransactionSortOptionsEnum.DATE:
+        orderOptions.createdAt = descending ? 'DESC' : 'ASC';
+        break;
+      case BlockchainTransactionSortOptionsEnum.TOKEN:
+        orderOptions.token = { symbol: descending ? 'DESC' : 'ASC' };
+        break;
+      case BlockchainTransactionSortOptionsEnum.CHAIN:
+        orderOptions.token = { chainId: descending ? 'DESC' : 'ASC' };
+        break;
+      case BlockchainTransactionSortOptionsEnum.AMOUNT:
+      case BlockchainTransactionSortOptionsEnum.TYPE:
+      case BlockchainTransactionSortOptionsEnum.STATUS:
+      case BlockchainTransactionSortOptionsEnum.HASH:
+      case BlockchainTransactionSortOptionsEnum.TOKEN_ID:
+        orderOptions[sort] = descending ? 'DESC' : 'ASC';
+        break;
+      default:
+        orderOptions.id = descending ? 'DESC' : 'ASC';
+        break;
+    }
+    return this.bTxLogRepository.find({
+      where: {
+        userId,
+        ...(status ? { status } : {}),
+        ...(type ? { type } : {}),
+        ...(status ? { status } : {}),
+        ...(block ? { blockNumber: BigInt(block) } : {}),
+        ...(token || chain
+          ? {
+              token: {
+                ...(token ? { symbol: token } : {}),
+                ...(chain ? { chainId: chain } : {}),
+              },
+            }
+          : {}),
+        ...(minAmount != null
+          ? {
+              amount:
+                maxAmount != null
+                  ? Between(minAmount, maxAmount)
+                  : MoreThan(minAmount),
+            }
+          : maxAmount != null
+            ? { amount: LessThan(maxAmount) }
+            : {}),
+        ...(marketId ? { remarks: JsonContains({ marketId }) } : {}),
+      },
+      ...(relations ? { relations } : {}),
+      ...(take ? { take } : {}),
+      ...(skip ? { skip } : {}),
+      order: orderOptions,
+    });
+  }
+
+  get spendingTransactionTypes() {
+    return [
+      BlockchainTransactionTypeEnum.TRADE_BUY,
+      BlockchainTransactionTypeEnum.TRANSFER,
+    ];
+  }
+
+  async getTokenSpentBy(
+    targetId: number | number[],
+    token: CryptoTokenEnum,
+    period: { from: Date; until: Date },
+    spendCriteria: 'payment' | 'fee' = 'payment',
+  ): Promise<number> {
+    if (token === CryptoTokenEnum.ORACLE) {
+      token = CryptoTokenEnum.WETH9; // LATER: OracleToken temp
+    }
+    switch (spendCriteria) {
+      case 'fee': {
+        let targetCondition = '$1';
+        if (targetId instanceof Array) {
+          if (targetId.length > 1) {
+            targetCondition = 'ANY($1)';
+          } else {
+            targetId = targetId[0];
+          }
+        }
+        const result = await this.predictionMarketParticipationRepository.query(
+          `SELECT COALESCE(SUM(pmp.market_fee), 0) AS fees FROM prediction_market_participation pmp 
+              JOIN cryptocurrency_token token ON pmp.payment_token_id = token.id
+              WHERE pmp.user_id = ${targetCondition} AND token.symbol = $2 
+              AND pmp.created_at > $3 AND pmp.created_at <= $4`,
+          [targetId, token, period.from, period.until],
+        );
+        return +(result[0]?.fees || 0);
+      }
+      default: {
+        let wallets: string | string[] = (
+          await this.blockchainWalletRepository.find({
+            where: {
+              userId:
+                targetId instanceof Array
+                  ? targetId.length > 1
+                    ? In(targetId)
+                    : targetId[0]
+                  : targetId,
+            },
+            select: ['address'],
+          })
+        ).map((w) => w.address);
+        let targetCondition = '$1';
+        if (wallets instanceof Array) {
+          if (wallets.length > 1) {
+            targetCondition = 'ANY($1)'; // Trying to not use ANY in any way possible, since it slows than the query.
+          } else {
+            wallets = wallets[0];
+          }
+        }
+        const result = await this.bTxLogRepository.query(
+          `SELECT COALESCE(SUM(t.amount), 0) AS amount FROM blockchain_transaction_log t 
+          JOIN cryptocurrency_token token ON t.token_id = token.id
+          WHERE t.from = ${targetCondition} AND token.symbol = $2 AND t.type = ANY($3) AND t.status = $4 AND t.created_at > $5 AND t.created_at <= $6`,
+          [
+            wallets,
+            token,
+            this.spendingTransactionTypes,
+            BlockchainTransactionStatusEnum.SUCCESSFUL,
+            period.from,
+            period.until,
+          ],
+        );
+        return +(result[0]?.amount || 0);
+      }
+    }
   }
 }

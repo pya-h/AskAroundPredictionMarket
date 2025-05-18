@@ -9,6 +9,7 @@ class PaymentTokenDto extends OmitType(CryptocurrencyToken, [
   'createdAt',
   'deletedAt',
   'updatedAt',
+  'alias',
 ]) {}
 
 export class TotalPerOutcomeTradeStatisticsDto extends OmitType(

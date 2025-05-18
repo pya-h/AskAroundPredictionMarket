@@ -8,7 +8,9 @@ export class OutcomeTokenPriceInfo extends OutcomeTokenInfoDto {
     nullable: true,
   })
   price: number | null;
+}
 
+export class OutcomeTokenPriceAndParticipantsInfo extends OutcomeTokenPriceInfo {
   @ApiProperty({
     description:
       'Number of users participated on this outcome (bought/sold); It indirectly affects the price in prediction markets.',

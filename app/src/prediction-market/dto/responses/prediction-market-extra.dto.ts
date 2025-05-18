@@ -53,7 +53,7 @@ export class PredictionMarketEntityWithParticipantsCount extends PredictionMarke
 
 export class PredictionMarketExtraDto extends OmitType(
   PredictionMarketEntityWithParticipantsCount,
-  ['statistics', 'status', 'creator', 'totalInvestment'],
+  ['status', 'creator', 'totalInvestment'],
 ) {
   @ApiProperty({
     enum: PredictionMarketStatusEnum,
@@ -75,7 +75,7 @@ export class PredictionMarketExtraDto extends OmitType(
     type: 'number',
     default: 0.0,
     description:
-      'Sum of all token amounts bought from this market; In other works this equals sum of all outcome.amountInvested values.',
+      'Sum of all token amounts traded from this market; In other words, this equals sum of all outcome.amountInvested values. DO NOT MISTAKE THIS WITH OraclePool',
   })
   totalInvestment: number;
 
@@ -86,6 +86,14 @@ export class PredictionMarketExtraDto extends OmitType(
       'Extra flag to distinguish deployed markets from scheduled(reserved) markets [in client side].',
   })
   isReserved: boolean;
+
+  @ApiProperty({
+    type: 'number',
+    description: 'Total amount of collateral users have put while trading.',
+    nullable: true,
+    default: 0,
+  })
+  oraclePool: number;
 }
 
 export class OutcomeStatisticsWithParticipants extends OutcomeStatistics {
@@ -96,20 +104,9 @@ export class OutcomeStatisticsWithParticipants extends OutcomeStatistics {
   })
   participants: number;
 }
-export class PredictionMarketExtraWithExtraStatisticsDto extends OmitType(
-  PredictionMarketExtraDto,
-  ['statistics'],
-) {
+export class PredictionMarketExtraWithExtraStatisticsDto extends PredictionMarketExtraDto {
   @ApiProperty({ type: OutcomeStatisticsWithParticipants, isArray: true })
   statistics: OutcomeStatisticsWithParticipants[];
-
-  @ApiProperty({
-    type: 'number',
-    description: 'Total amount of collateral users have put while buying.',
-    nullable: true,
-    default: 0,
-  })
-  oraclePool: number;
 }
 
 export class RedeemHistoryUnloaded extends OmitType(RedeemHistory, [
@@ -144,14 +141,6 @@ export class UserMarketsListResponseDto extends OmitType(
       'Total amount of collateral transferred by user while trading in the market.',
   })
   myTotalCollateralTransferred: number;
-
-  @ApiProperty({
-    type: 'number',
-    description: 'Total amount of collateral users have put while buying.',
-    nullable: true,
-    default: 0,
-  })
-  oraclePool: number;
 
   @ApiPropertyOptional({
     type: RedeemHistoryUnloaded,

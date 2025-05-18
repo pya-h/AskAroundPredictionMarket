@@ -3,4 +3,5 @@ export enum PredictionMarketStatusEnum {
   ONGOING = 'ongoing',
   CLOSED = 'closed',
   RESOLVED = 'resolved',
+  PAUSED = 'paused',
 }

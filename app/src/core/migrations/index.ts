@@ -48,3 +48,38 @@ export const getSalesmanId = async (queryRunner: QueryRunner) => {
   if (!result?.length) throw new NotFoundException('Salesman user not found!');
   return result[0].id;
 };
+
+export const addIndexOnColumns = async (
+  queryRunner: QueryRunner,
+  columns: {
+    [table: string]: string[];
+  },
+) => {
+  for (const table in columns) {
+    await Promise.all(
+      columns[table].map((col) =>
+        queryRunner.query(`
+          CREATE INDEX idx_${table}_${col.replace(
+            ', ',
+            '_',
+          )} ON ${table}(${col})
+      `),
+      ),
+    );
+  }
+};
+
+export const dropColumnIndexes = async (
+  queryRunner: QueryRunner,
+  columns: {
+    [table: string]: string[];
+  },
+) => {
+  for (const table in columns) {
+    await Promise.all(
+      columns[table].map((col) =>
+        queryRunner.query(`DROP INDEX idx_${table}_${col.replace(', ', '_')}`),
+      ),
+    );
+  }
+};

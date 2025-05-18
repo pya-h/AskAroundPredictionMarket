@@ -44,4 +44,8 @@ export class BaseConditionalToken extends BaseEntity {
   })
   @Column({ nullable: true, type: 'varchar', length: 256 })
   description?: string;
+
+  get title() {
+    return this.predictionOutcome?.title;
+  }
 }

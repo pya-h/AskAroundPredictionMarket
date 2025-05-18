@@ -27,6 +27,10 @@ import { Response } from 'express';
 import { LoginUserDto } from './dtos/login-user.dto';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { AuthGuard } from './guards/auth.guard';
+import { ApiStandardOkResponse } from 'src/core/decorators/api-standard-ok-response.decorator';
+import { UpdateFcmTokenDto } from './dtos/update-fcm-token.dto';
+import { UserNotificationSettings } from './entities/user-notification-settings.entity';
+import { UpdateNotificationSettingsDto } from './dtos/update-notification-settings.dto';
 
 @Controller('user')
 @NoCredentialsUserSerialize(UserDto)
@@ -36,7 +40,7 @@ export class UserController {
     private authService: AuthService,
   ) {}
 
-  @Post('/register')
+  @Post('register')
   async register(@Body() body: PostUserDto, @Session() session: any) {
     if (session.userID) throw new ConflictException('You are logged in.');
     const { username, password, email } = body;
@@ -46,7 +50,7 @@ export class UserController {
     return user;
   }
 
-  @Get('/login')
+  @Get('login')
   async login(
     @Query('username') username: string,
     @Query('email') email: string,
@@ -68,7 +72,7 @@ export class UserController {
   }
 
   @HttpCode(HttpStatus.OK)
-  @Post('/login')
+  @Post('login')
   async loginByPost(@Body() body: LoginUserDto, @Session() session: any) {
     if (session.userID) throw new ConflictException('You are logged in.');
     const { username, email, password } = body;
@@ -84,19 +88,19 @@ export class UserController {
     return user;
   }
 
-  @Get('/whoami')
+  @Get('whoami')
   @UseGuards(AuthGuard)
   async whoami(@CurrentUser() user: User) {
     return user;
   }
 
-  @Post('/logout')
+  @Post('logout')
   async logout(@Session() session: any, @Res() response: Response) {
     session.userID = null;
     response.status(HttpStatus.OK).send('Successfully logged out.');
   }
 
-  @Get('/:id')
+  @Get(':id')
   async getUser(@Param('id') id: string) {
     const user = await this.userService.findOne(+id);
     if (!user)
@@ -127,7 +131,7 @@ export class UserController {
     return users;
   }
 
-  @Patch('/:id')
+  @Patch(':id')
   @UseGuards(AuthGuard)
   async updateUser(
     @CurrentUser() user: User,
@@ -141,5 +145,29 @@ export class UserController {
 
     user = await this.userService.update(user, body); // actually its not necessary to assign return value to user, but whatever!
     return user;
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiStandardOkResponse('string', { default: 'OK' })
+  @Patch('fcm-token')
+  async fcmToken(
+    @CurrentUser() user: User,
+    @Body() updateFcmTokenDto: UpdateFcmTokenDto,
+  ) {
+    await this.userService.updateFcmToken(user, updateFcmTokenDto);
+    return 'OK';
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiStandardOkResponse(UserNotificationSettings)
+  @Patch('notification-setting')
+  updateNotificationSettings(
+    @CurrentUser() user: User,
+    @Body() updateNotificationSettingsDto: UpdateNotificationSettingsDto,
+  ) {
+    return this.userService.updateUserNotificationSettings(
+      user,
+      updateNotificationSettingsDto,
+    );
   }
 }
